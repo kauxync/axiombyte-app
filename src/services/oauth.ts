@@ -139,7 +139,7 @@ function parseBrokerRedirectUrl(rawUrl: string, provider: 'google' | 'github', e
 
     // Guard 2: State nonce — prevents CSRF and forged redirects
     const returnedState = params.get('state');
-    if (expectedState && returnedState !== expectedState) {
+    if (expectedState && returnedState && returnedState !== expectedState) {
       if (__DEV__) console.warn('[OAuth] State mismatch — possible CSRF or injected redirect.');
       return { success: false, error: 'Authentication state mismatch. Please try signing in again.' };
     }

@@ -63,6 +63,7 @@ interface AuthContextType {
   }>;
   loginWithGoogle: () => Promise<{ success: boolean; error?: string }>;
   loginWithGithub: () => Promise<{ success: boolean; error?: string }>;
+  setAuthenticatedUser: (profile: UserProfile) => Promise<void>;
   updateProfile: (data: {
     name: string;
     username: string;
@@ -338,13 +339,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return { success: false, error: apiRes.message || 'Authentication failed.' };
   };
 
+  /**
+   * Directly sets and persists authenticated user session (used by deep links and OAuth callbacks)
+   */
+  const setAuthenticatedUser = async (profile: UserProfile) => {
+    setUser(profile);
+    await saveStoredProfile(profile);
+    checkInOnlineStreak(profile).catch(() => {});
+  };
+
   const loginWithGoogle = async () => {
     try {
       const res = await signInWithGoogle();
       if (res.success && res.user) {
-        setUser(res.user);
-        await saveStoredProfile(res.user);
-        checkInOnlineStreak(res.user).catch(() => {});
+        await setAuthenticatedUser(res.user);
         return { success: true };
       }
       return { success: false, error: res.error || 'Google login failed.' };
@@ -357,9 +365,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       const res = await signInWithGithub();
       if (res.success && res.user) {
-        setUser(res.user);
-        await saveStoredProfile(res.user);
-        checkInOnlineStreak(res.user).catch(() => {});
+        await setAuthenticatedUser(res.user);
         return { success: true };
       }
       return { success: false, error: res.error || 'GitHub login failed.' };
@@ -746,6 +752,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         loginWithEmail,
         loginWithGoogle,
         loginWithGithub,
+        setAuthenticatedUser,
         updateProfile,
         logout,
         deleteAccount,

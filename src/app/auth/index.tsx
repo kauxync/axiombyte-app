@@ -37,7 +37,7 @@ export default function UniversalAuthCallbackScreen() {
     userData?: string;
     provider?: string;
   }>();
-  const { user } = useAuth();
+  const { user, setAuthenticatedUser } = useAuth();
   const [message, setMessage] = useState('Finalizing AxiomByte Authentication...');
 
   useEffect(() => {
@@ -106,11 +106,11 @@ export default function UniversalAuthCallbackScreen() {
             createdAt: userObj.createdAt || new Date().toISOString(),
           };
 
-          await saveStoredProfile(profile);
-          setMessage('Authentication verified! Loading workspace...');
+          await setAuthenticatedUser(profile);
+          setMessage('Authentication verified! Loading your profile...');
           setTimeout(() => {
             router.replace('/');
-          }, 600);
+          }, 300);
           return;
         } catch (e: any) {
           if (__DEV__) console.error('[Auth Callback] Failed to decode user data:', e);
