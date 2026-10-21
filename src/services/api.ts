@@ -19,6 +19,7 @@ export const API_ENDPOINTS = {
   TOPIC_CONTENT: `${API_BASE_URL}/api/topic_content.php`,
   CODELAB_ITEM: `${API_BASE_URL}/api/codelab_item.php`,
   DELETE_ACCOUNT: `${API_BASE_URL}/api/delete_account.php`,
+  STREAK_SYNC: `${API_BASE_URL}/api/streak_sync.php`,
 };
 
 /**
@@ -598,6 +599,96 @@ export async function syncRewardTransactionWithApi(payload: {
     return { success: true, message: 'Logged locally', isMockFallback: true };
   } catch {
     return { success: true, message: 'Saved offline', isMockFallback: true };
+  }
+}
+
+export interface RemoteStreakPayload {
+  currentStreak: number;
+  longestStreak: number;
+  lastActiveDate: string;
+  todayCompleted: boolean;
+  freezeCount: number;
+  lostStreak: number;
+  coins: number;
+  coinsAwarded?: number;
+  freezeUsedToday?: boolean;
+  streakLostToday?: boolean;
+  recovered?: boolean;
+  message?: string;
+}
+
+/**
+ * 12. Online Streak Check-In & Sync (WhatsApp-style automatic check-in on coming online)
+ */
+export async function syncOnlineStreakWithApi(userId: string): Promise<ApiResponse<RemoteStreakPayload>> {
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 8000);
+
+    const authHeader = await getAuthHeader();
+    const res = await fetch(API_ENDPOINTS.STREAK_SYNC, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeader },
+      body: JSON.stringify({ userId, action: 'online_checkin' }),
+      signal: controller.signal,
+    });
+    clearTimeout(timer);
+
+    if (res.ok) {
+      return await res.json();
+    }
+    return { success: false, message: 'Could not sync streak with remote server' };
+  } catch (err: any) {
+    return { success: false, message: err?.message || 'Offline streak check' };
+  }
+}
+
+/**
+ * 13. Purchase Streak Freeze shield (50 coins) & optionally recover broken streak
+ */
+export async function purchaseStreakFreezeApi(
+  userId: string,
+  recoverLost = false
+): Promise<ApiResponse<RemoteStreakPayload>> {
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 8000);
+
+    const authHeader = await getAuthHeader();
+    const res = await fetch(API_ENDPOINTS.STREAK_SYNC, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeader },
+      body: JSON.stringify({ userId, action: 'purchase_freeze', recoverLost }),
+      signal: controller.signal,
+    });
+    clearTimeout(timer);
+
+    return await res.json();
+  } catch (err: any) {
+    return { success: false, message: err?.message || 'Failed to purchase streak freeze' };
+  }
+}
+
+/**
+ * 14. Recover broken streak using existing available Streak Freeze shield
+ */
+export async function recoverStreakWithFreezeApi(userId: string): Promise<ApiResponse<RemoteStreakPayload>> {
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 8000);
+
+    const authHeader = await getAuthHeader();
+    const res = await fetch(API_ENDPOINTS.STREAK_SYNC, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeader },
+      body: JSON.stringify({ userId, action: 'recover_streak' }),
+      signal: controller.signal,
+    });
+    clearTimeout(timer);
+
+    return await res.json();
+  } catch (err: any) {
+    return { success: false, message: err?.message || 'Failed to recover streak' };
   }
 }
 

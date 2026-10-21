@@ -48,6 +48,9 @@ export interface StreakData {
   freezeCount: number;
   historyDates: string[]; // List of YYYY-MM-DD
   weeklyActivity: boolean[]; // 7 elements [Mon, Tue, Wed, Thu, Fri, Sat, Sun]
+  lostStreak?: number; // Preserved streak value if broken without freeze
+  freezeUsedToday?: boolean; // True if a freeze shield was consumed to protect streak today
+  streakLostToday?: boolean; // True if streak broke today
 }
 
 const STORAGE_KEYS = {
@@ -251,12 +254,17 @@ export async function getStreakData(): Promise<StreakData> {
       data.freezeCount -= 1;
       data.lastActiveDate = yesterday;
       data.todayCompleted = false;
+      data.freezeUsedToday = true;
       data.weeklyActivity = computeCurrentWeekActivity(history);
       await AsyncStorage.setItem(STORAGE_KEYS.STREAK_DATA, JSON.stringify(data));
       return data;
     }
 
-    // Streak broken
+    // Streak broken: preserve lostStreak for recovery purchase
+    if (data.currentStreak > 0) {
+      data.lostStreak = data.currentStreak;
+      data.streakLostToday = true;
+    }
     data.currentStreak = 0;
     data.todayCompleted = false;
     data.weeklyActivity = computeCurrentWeekActivity(history);
@@ -356,8 +364,9 @@ export async function recordDailyStreakActivity(): Promise<{
 }
 
 export async function buyStreakFreezeFromStorage(
-  cost = 50
-): Promise<{ success: boolean; newFreezeCount: number; error?: string }> {
+  cost = 50,
+  recoverLost = false
+): Promise<{ success: boolean; newFreezeCount: number; restoredStreak?: number; error?: string }> {
   try {
     const profile = await getStoredProfile();
     if (!profile) {
@@ -376,26 +385,70 @@ export async function buyStreakFreezeFromStorage(
     profile.coins -= cost;
     await saveStoredProfile(profile);
 
+    const streak = await getStreakData();
+    let restoredStreak = 0;
+
+    if (recoverLost && (streak.lostStreak || 0) > 0) {
+      restoredStreak = streak.lostStreak!;
+      streak.currentStreak = restoredStreak;
+      streak.longestStreak = Math.max(streak.longestStreak, restoredStreak);
+      streak.lostStreak = 0;
+      streak.todayCompleted = true;
+      streak.lastActiveDate = getLocalDateString();
+    } else {
+      streak.freezeCount += 1;
+    }
+
+    await saveStreakData(streak);
+
     // Save transaction
     const tx: CoinTransaction = {
       id: 'tx_freeze_' + Date.now(),
       type: 'streak_freeze',
       amount: -cost,
       inrValue: -(cost / 100),
-      description: `Purchased 1 Streak Freeze Protection (-${cost} Coins)`,
+      description: recoverLost
+        ? `Purchased Streak Freeze & Recovered ${restoredStreak}-Day Streak (-${cost} Coins)`
+        : `Purchased 1 Streak Freeze Protection (-${cost} Coins)`,
       timestamp: 'Just now',
       status: 'completed',
     };
     await saveTransaction(tx);
 
-    // Increment freeze count
-    const streak = await getStreakData();
-    streak.freezeCount += 1;
-    await saveStreakData(streak);
-
-    return { success: true, newFreezeCount: streak.freezeCount };
+    return { success: true, newFreezeCount: streak.freezeCount, restoredStreak };
   } catch (err: any) {
     return { success: false, newFreezeCount: 0, error: err?.message || 'Failed to purchase freeze.' };
+  }
+}
+
+export async function recoverLostStreakFromStorage(): Promise<{
+  success: boolean;
+  restoredStreak?: number;
+  newFreezeCount?: number;
+  error?: string;
+}> {
+  try {
+    const streak = await getStreakData();
+    if (!streak.lostStreak || streak.lostStreak <= 0) {
+      return { success: false, error: 'No lost streak to recover.' };
+    }
+    if (streak.freezeCount <= 0) {
+      return { success: false, error: 'No Streak Freeze shields available. Please buy one for 50 coins.' };
+    }
+
+    streak.freezeCount -= 1;
+    const restored = streak.lostStreak;
+    streak.currentStreak = restored;
+    streak.longestStreak = Math.max(streak.longestStreak, restored);
+    streak.lostStreak = 0;
+    streak.todayCompleted = true;
+    streak.lastActiveDate = getLocalDateString();
+
+    await saveStreakData(streak);
+
+    return { success: true, restoredStreak: restored, newFreezeCount: streak.freezeCount };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Failed to restore streak.' };
   }
 }
 

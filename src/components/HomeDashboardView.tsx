@@ -446,22 +446,41 @@ export function HomeDashboardView({
             style={({ pressed }) => [
               styles.topStreakPill,
               {
-                backgroundColor: streak.todayCompleted
-                  ? isDark
-                    ? 'rgba(255, 90, 60, 0.16)'
-                    : 'rgba(255, 90, 60, 0.10)'
-                  : colors.errorBg,
-                borderColor: streak.todayCompleted ? '#FF5A3C' : colors.errorBorder,
+                backgroundColor:
+                  streak.lostStreak && streak.lostStreak > 0
+                    ? 'rgba(239, 68, 68, 0.18)'
+                    : streak.todayCompleted
+                    ? isDark
+                      ? 'rgba(255, 90, 60, 0.16)'
+                      : 'rgba(255, 90, 60, 0.10)'
+                    : colors.errorBg,
+                borderColor:
+                  streak.lostStreak && streak.lostStreak > 0
+                    ? '#EF4444'
+                    : streak.todayCompleted
+                    ? '#FF5A3C'
+                    : colors.errorBorder,
               },
               pressed && { opacity: 0.8 },
             ]}>
-            <Text style={styles.topStreakEmoji}>🔥</Text>
+            <Text style={styles.topStreakEmoji}>
+              {streak.lostStreak && streak.lostStreak > 0 ? '💔' : '🔥'}
+            </Text>
             <Text
               style={[
                 styles.topStreakText,
-                { color: streak.todayCompleted ? '#FF5A3C' : colors.error },
+                {
+                  color:
+                    streak.lostStreak && streak.lostStreak > 0
+                      ? '#EF4444'
+                      : streak.todayCompleted
+                      ? '#FF5A3C'
+                      : colors.error,
+                },
               ]}>
-              {streak.currentStreak}d
+              {streak.lostStreak && streak.lostStreak > 0
+                ? `${streak.lostStreak}d!`
+                : `${streak.currentStreak}d`}
             </Text>
           </Pressable>
         </View>

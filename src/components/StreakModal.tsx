@@ -31,9 +31,10 @@ const WEEK_DAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
 export function StreakModal({ visible, onClose, onPracticePress }: StreakModalProps) {
   const { colors, isDark } = useAppTheme();
-  const { user, streak, recordStreakActivity, buyStreakFreeze } = useAuth();
+  const { user, streak, recordStreakActivity, buyStreakFreeze, recoverLostStreak } = useAuth();
 
   const [buyingFreeze, setBuyingFreeze] = useState(false);
+  const [recovering, setRecovering] = useState(false);
   const [claiming, setClaiming] = useState(false);
   const [notice, setNotice] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
 
@@ -83,6 +84,35 @@ export function StreakModal({ visible, onClose, onPracticePress }: StreakModalPr
       setNotice({ type: 'error', message: 'Could not purchase freeze.' });
     } finally {
       setBuyingFreeze(false);
+    }
+  };
+
+  const handleRecoverStreak = async () => {
+    setRecovering(true);
+    setNotice(null);
+    try {
+      let res;
+      if (streak.freezeCount > 0) {
+        res = await recoverLostStreak();
+      } else {
+        res = await buyStreakFreeze(true);
+      }
+
+      if (res.success) {
+        setNotice({
+          type: 'success',
+          message: `🛡️ Streak Freeze applied! Your ${res.restoredStreak || streak.lostStreak}-day streak is fully restored!`,
+        });
+      } else {
+        setNotice({
+          type: 'error',
+          message: res.error || 'Could not recover streak.',
+        });
+      }
+    } catch {
+      setNotice({ type: 'error', message: 'Failed to recover streak.' });
+    } finally {
+      setRecovering(false);
     }
   };
 
@@ -228,6 +258,71 @@ export function StreakModal({ visible, onClose, onPracticePress }: StreakModalPr
                 })}
               </View>
             </View>
+
+            {/* Lost Streak Recovery Banner */}
+            {!!streak.lostStreak && streak.lostStreak > 0 && (
+              <View
+                style={[
+                  styles.recoveryCard,
+                  {
+                    backgroundColor: 'rgba(239, 68, 68, 0.12)',
+                    borderColor: '#EF4444',
+                  },
+                ]}>
+                <View style={styles.recoveryHeader}>
+                  <Text style={styles.recoveryEmoji}>💔</Text>
+                  <View style={{ flex: 1 }}>
+                    <Text style={[styles.recoveryTitle, { color: '#EF4444' }]}>
+                      {streak.lostStreak}-Day Streak Lost!
+                    </Text>
+                    <Text style={[styles.recoveryDesc, { color: colors.textMuted }]}>
+                      You missed a day, but your streak is protected if you cover it with a Streak Freeze shield.
+                    </Text>
+                  </View>
+                </View>
+
+                <Pressable
+                  onPress={handleRecoverStreak}
+                  disabled={recovering || (streak.freezeCount === 0 && (user?.coins || 0) < 50)}
+                  style={[
+                    styles.recoveryActionBtn,
+                    {
+                      backgroundColor: '#208AEF',
+                      opacity: (streak.freezeCount > 0 || (user?.coins || 0) >= 50) ? 1 : 0.6,
+                    },
+                  ]}>
+                  {recovering ? (
+                    <ActivityIndicator size="small" color="#FFF" />
+                  ) : (
+                    <>
+                      <Ionicons name="shield-checkmark" size={16} color="#FFF" />
+                      <Text style={styles.recoveryActionText}>
+                        {streak.freezeCount > 0
+                          ? 'Use Shield to Restore Streak'
+                          : 'Buy Freeze & Restore Streak (50 🪙)'}
+                      </Text>
+                    </>
+                  )}
+                </Pressable>
+              </View>
+            )}
+
+            {/* Freeze Protection Banner if Shield was used today */}
+            {streak.freezeUsedToday && (
+              <View
+                style={[
+                  styles.shieldAlertCard,
+                  {
+                    backgroundColor: 'rgba(56, 189, 248, 0.12)',
+                    borderColor: 'rgba(56, 189, 248, 0.35)',
+                  },
+                ]}>
+                <Ionicons name="shield-checkmark" size={20} color="#38BDF8" />
+                <Text style={[styles.shieldAlertText, { color: '#38BDF8' }]}>
+                  🛡️ Streak Freeze Shield Protected Your Streak! You missed a day, but your {streak.currentStreak}-day streak was saved.
+                </Text>
+              </View>
+            )}
 
             {/* Streak Freeze Shield Card */}
             <View
@@ -635,5 +730,58 @@ const styles = StyleSheet.create({
     fontFamily: Fonts.bodyBold,
     fontSize: 15,
     color: '#FFF',
+  },
+  recoveryCard: {
+    borderRadius: 16,
+    padding: 16,
+    borderWidth: 1.5,
+    marginBottom: 16,
+  },
+  recoveryHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginBottom: 14,
+  },
+  recoveryEmoji: {
+    fontSize: 28,
+  },
+  recoveryTitle: {
+    fontFamily: Fonts.heading,
+    fontSize: 16,
+    marginBottom: 4,
+  },
+  recoveryDesc: {
+    fontFamily: Fonts.body,
+    fontSize: 12.5,
+    lineHeight: 17,
+  },
+  recoveryActionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 12,
+    borderRadius: 12,
+  },
+  recoveryActionText: {
+    fontFamily: Fonts.bodyBold,
+    fontSize: 14,
+    color: '#FFF',
+  },
+  shieldAlertCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    borderRadius: 14,
+    padding: 14,
+    borderWidth: 1,
+    marginBottom: 16,
+  },
+  shieldAlertText: {
+    flex: 1,
+    fontFamily: Fonts.bodyBold,
+    fontSize: 12.5,
+    lineHeight: 17,
   },
 });

@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
+import { AppState, AppStateStatus } from 'react-native';
 import {
   UserProfile,
   CoinTransaction,
@@ -12,8 +13,10 @@ import {
   clearAllSessionData,
   generateReferralCode,
   getStreakData,
+  saveStreakData,
   recordDailyStreakActivity,
   buyStreakFreezeFromStorage,
+  recoverLostStreakFromStorage,
   getLocalDateString,
   computeCurrentWeekActivity,
 } from '@/services/storage';
@@ -25,6 +28,9 @@ import {
   updateProfileWithApi,
   deleteAccountWithApi,
   syncRewardTransactionWithApi,
+  syncOnlineStreakWithApi,
+  purchaseStreakFreezeApi,
+  recoverStreakWithFreezeApi,
 } from '@/services/api';
 import { signInWithGoogle, signInWithGithub } from '@/services/oauth';
 import { saveAuthToken, deleteAuthToken } from '@/services/secureStorage';
@@ -44,7 +50,9 @@ interface AuthContextType {
     newStreak: number;
     milestoneBonus?: { days: number; bonus: number };
   }>;
-  buyStreakFreeze: () => Promise<{ success: boolean; error?: string }>;
+  buyStreakFreeze: (recoverLost?: boolean) => Promise<{ success: boolean; error?: string; restoredStreak?: number }>;
+  recoverLostStreak: () => Promise<{ success: boolean; error?: string; restoredStreak?: number }>;
+  checkInOnlineStreak: (targetUser?: UserProfile | null) => Promise<void>;
   sendEmailVerification: (email: string) => Promise<{ success: boolean; message: string; debugCode?: string }>;
   signUpWithEmail: (email: string, pass: string, verificationCode: string) => Promise<{ success: boolean; error?: string }>;
   loginWithEmail: (email: string, pass: string) => Promise<{
@@ -101,6 +109,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setIsOnboarded(onboarded);
         setTransactions(txList);
         setStreak(streakData);
+
+        // WhatsApp-style automatic online check-in on app open
+        if (storedUser?.id) {
+          checkInOnlineStreak(storedUser).catch(() => {});
+        }
       } catch (err) {
         console.error('Failed to initialize auth session:', err);
       } finally {
@@ -110,6 +123,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     initSession();
   }, []);
+
+  // Sync streak whenever app comes to active foreground
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (nextState: AppStateStatus) => {
+      if (nextState === 'active' && user?.id) {
+        checkInOnlineStreak(user).catch(() => {});
+      }
+    });
+    return () => subscription.remove();
+  }, [user?.id]);
 
   const completeOnboarding = async () => {
     setIsOnboarded(true);
@@ -237,6 +260,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setTransactions([welcomeTx]);
     await saveStoredProfile(newUser);
     await saveTransaction(welcomeTx);
+    checkInOnlineStreak(newUser).catch(() => {});
 
     return { success: true };
   };
@@ -288,6 +312,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       };
       setUser(userProfile);
       await saveStoredProfile(userProfile);
+      checkInOnlineStreak(userProfile).catch(() => {});
       // Persist auth token returned by server for future authenticated API calls
       if (apiRes.data?.token) {
         await saveAuthToken(apiRes.data.token);
@@ -319,6 +344,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (res.success && res.user) {
         setUser(res.user);
         await saveStoredProfile(res.user);
+        checkInOnlineStreak(res.user).catch(() => {});
         return { success: true };
       }
       return { success: false, error: res.error || 'Google login failed.' };
@@ -333,6 +359,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (res.success && res.user) {
         setUser(res.user);
         await saveStoredProfile(res.user);
+        checkInOnlineStreak(res.user).catch(() => {});
         return { success: true };
       }
       return { success: false, error: res.error || 'GitHub login failed.' };
@@ -500,11 +527,109 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   /**
-   * Buys a Streak Freeze shield using 50 coins
+   * Online Streak Check-In (WhatsApp-style automatic check-in when user comes online)
+   * Connects to https://axiombytedb.kauxync.in/api/streak_sync.php
+   * Automatically consumes freeze shield if yesterday was missed,
+   * updates MySQL users table, and keeps database in sync.
    */
-  const buyStreakFreeze = async () => {
-    const res = await buyStreakFreezeFromStorage(50);
-    if (res.success) {
+  const checkInOnlineStreak = async (targetUser?: UserProfile | null) => {
+    const activeUser = targetUser !== undefined ? targetUser : user;
+    if (!activeUser?.id) return;
+
+    try {
+      const res = await syncOnlineStreakWithApi(activeUser.id);
+      if (res.success && res.data) {
+        const d = res.data;
+        const currentData = await getStreakData();
+        const updatedHistory = Array.from(new Set([d.lastActiveDate, ...(currentData.historyDates || [])]));
+
+        const syncedStreak: StreakData = {
+          currentStreak: d.currentStreak,
+          longestStreak: d.longestStreak,
+          lastActiveDate: d.lastActiveDate,
+          todayCompleted: d.todayCompleted,
+          freezeCount: d.freezeCount,
+          lostStreak: d.lostStreak,
+          freezeUsedToday: d.freezeUsedToday,
+          streakLostToday: d.streakLostToday,
+          historyDates: updatedHistory,
+          weeklyActivity: computeCurrentWeekActivity(updatedHistory),
+        };
+
+        setStreak(syncedStreak);
+        await saveStreakData(syncedStreak);
+
+        // Update coins if awarded or altered
+        if (d.coins !== undefined && d.coins !== activeUser.coins) {
+          const syncedUser = { ...activeUser, coins: d.coins };
+          setUser(syncedUser);
+          await saveStoredProfile(syncedUser);
+        }
+
+        if (d.coinsAwarded && d.coinsAwarded > 0) {
+          const freshTx = await getTransactions();
+          setTransactions(freshTx);
+        }
+        return;
+      }
+    } catch (e) {
+      if (__DEV__) console.warn('[Streak] Remote sync failed, using offline streak logic:', e);
+    }
+
+    // Local fallback check-in if server is offline
+    const local = await recordDailyStreakActivity();
+    setStreak(local.updatedStreak);
+    if (local.coinsAwarded > 0 && activeUser) {
+      const updatedCoins = activeUser.coins + local.coinsAwarded;
+      const updatedUser = { ...activeUser, coins: updatedCoins };
+      setUser(updatedUser);
+      await saveStoredProfile(updatedUser);
+    }
+  };
+
+  /**
+   * Buys a Streak Freeze shield using 50 coins (optionally recovering a lost streak)
+   */
+  const buyStreakFreeze = async (recoverLost = false) => {
+    if (!user?.id) return { success: false, error: 'User not logged in' };
+
+    try {
+      const res = await purchaseStreakFreezeApi(user.id, recoverLost);
+      if (res.success && res.data) {
+        const d = res.data;
+        const currentData = await getStreakData();
+        const updatedHistory = Array.from(new Set([d.lastActiveDate, ...(currentData.historyDates || [])]));
+
+        const syncedStreak: StreakData = {
+          currentStreak: d.currentStreak,
+          longestStreak: d.longestStreak,
+          lastActiveDate: d.lastActiveDate,
+          todayCompleted: d.todayCompleted,
+          freezeCount: d.freezeCount,
+          lostStreak: d.lostStreak,
+          historyDates: updatedHistory,
+          weeklyActivity: computeCurrentWeekActivity(updatedHistory),
+        };
+
+        setStreak(syncedStreak);
+        await saveStreakData(syncedStreak);
+
+        const updatedUser = { ...user, coins: d.coins };
+        setUser(updatedUser);
+        await saveStoredProfile(updatedUser);
+
+        const freshTx = await getTransactions();
+        setTransactions(freshTx);
+
+        return { success: true, restoredStreak: d.currentStreak };
+      }
+    } catch (e) {
+      if (__DEV__) console.warn('[Streak] Remote purchase failed, trying local:', e);
+    }
+
+    // Fallback to local storage if API is unreachable
+    const localRes = await buyStreakFreezeFromStorage(50, recoverLost);
+    if (localRes.success) {
       const freshStreak = await getStreakData();
       setStreak(freshStreak);
       if (user) {
@@ -512,26 +637,52 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const updatedUser = { ...user, coins: updatedCoins };
         setUser(updatedUser);
         await saveStoredProfile(updatedUser);
-
-        // Sync coin deduction with backend
-        syncRewardTransactionWithApi({
-          userId: user.id,
-          type: 'streak_freeze',
-          amount: -50,
-          description: 'Purchased 1 Streak Freeze Protection (-50 Coins)',
-        }).then((apiRes) => {
-          if (apiRes.data?.verifiedBalance !== undefined) {
-            const syncedUser = { ...user, coins: apiRes.data.verifiedBalance };
-            setUser(syncedUser);
-            saveStoredProfile(syncedUser).catch(() => {});
-          }
-        }).catch(() => {});
       }
       const freshTx = await getTransactions();
       setTransactions(freshTx);
-      return { success: true };
+      return { success: true, restoredStreak: localRes.restoredStreak };
     }
-    return { success: false, error: res.error };
+    return { success: false, error: localRes.error };
+  };
+
+  /**
+   * Recovers a broken streak using an available Streak Freeze shield
+   */
+  const recoverLostStreak = async () => {
+    if (!user?.id) return { success: false, error: 'User not logged in' };
+
+    try {
+      const res = await recoverStreakWithFreezeApi(user.id);
+      if (res.success && res.data) {
+        const d = res.data;
+        const currentData = await getStreakData();
+        const updatedHistory = Array.from(new Set([d.lastActiveDate, ...(currentData.historyDates || [])]));
+
+        const syncedStreak: StreakData = {
+          currentStreak: d.currentStreak,
+          longestStreak: d.longestStreak,
+          lastActiveDate: d.lastActiveDate,
+          todayCompleted: d.todayCompleted,
+          freezeCount: d.freezeCount,
+          lostStreak: 0,
+          historyDates: updatedHistory,
+          weeklyActivity: computeCurrentWeekActivity(updatedHistory),
+        };
+
+        setStreak(syncedStreak);
+        await saveStreakData(syncedStreak);
+
+        return { success: true, restoredStreak: d.currentStreak };
+      }
+    } catch {}
+
+    const localRes = await recoverLostStreakFromStorage();
+    if (localRes.success) {
+      const freshStreak = await getStreakData();
+      setStreak(freshStreak);
+      return { success: true, restoredStreak: localRes.restoredStreak };
+    }
+    return { success: false, error: localRes.error };
   };
 
   const logout = async () => {
@@ -587,6 +738,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         streak,
         recordStreakActivity,
         buyStreakFreeze,
+        recoverLostStreak,
+        checkInOnlineStreak,
         completeOnboarding,
         sendEmailVerification,
         signUpWithEmail,

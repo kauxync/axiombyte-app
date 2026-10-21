@@ -1056,7 +1056,9 @@ export function ProfileWalletView({
                   style={[
                     styles.streakStatusBadge,
                     {
-                      backgroundColor: streak.todayCompleted
+                      backgroundColor: streak.lostStreak && streak.lostStreak > 0
+                        ? 'rgba(239, 68, 68, 0.14)'
+                        : streak.todayCompleted
                         ? 'rgba(16, 185, 129, 0.14)'
                         : 'rgba(245, 158, 11, 0.14)',
                     },
@@ -1064,15 +1066,35 @@ export function ProfileWalletView({
                   <Text
                     style={[
                       styles.streakStatusBadgeText,
-                      { color: streak.todayCompleted ? '#10B981' : '#F59E0B' },
+                      {
+                        color: streak.lostStreak && streak.lostStreak > 0
+                          ? '#EF4444'
+                          : streak.todayCompleted
+                          ? '#10B981'
+                          : '#F59E0B',
+                      },
                     ]}>
-                    {streak.todayCompleted ? 'COMPLETED' : 'PENDING'}
+                    {streak.lostStreak && streak.lostStreak > 0
+                      ? 'RECOVERABLE'
+                      : streak.todayCompleted
+                      ? 'COMPLETED'
+                      : 'PENDING'}
                   </Text>
                 </View>
               </View>
 
-              <Text style={[styles.streakCardSub, { color: colors.textMuted }]}>
-                Record: {streak.longestStreak} days • {streak.freezeCount} Shield available
+              <Text
+                style={[
+                  styles.streakCardSub,
+                  {
+                    color: streak.lostStreak && streak.lostStreak > 0
+                      ? '#EF4444'
+                      : colors.textMuted,
+                  },
+                ]}>
+                {streak.lostStreak && streak.lostStreak > 0
+                  ? `💔 ${streak.lostStreak} days lost • Tap to restore with Freeze`
+                  : `Record: ${streak.longestStreak} days • ${streak.freezeCount} Shield available`}
               </Text>
             </View>
           </View>
