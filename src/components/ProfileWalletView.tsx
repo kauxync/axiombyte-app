@@ -5,7 +5,6 @@ import {
   ScrollView,
   Pressable,
   StyleSheet,
-  Alert,
   TextInput,
   Share,
   BackHandler,
@@ -15,13 +14,17 @@ import {
 import Constants from 'expo-constants';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '@/context/AuthContext';
+import { useAlert } from '@/context/AlertContext';
+import { StyledAlertButton } from './StyledAlertModal';
 import { AvatarIcon, AvatarPicker } from './AvatarPicker';
 import { StreakModal } from './StreakModal';
 import { ReferralModal } from './ReferralModal';
 import { Fonts } from '@/constants/theme';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAppTheme } from '@/context/ThemeContext';
-import { checkServerStatus } from '@/services/api';
+import { checkServerStatus, fetchLegalPolicies, LegalPoliciesData } from '@/services/api';
+import { checkAppUpdate, downloadAndReloadUpdate } from '@/services/updates';
+import { MarkdownContentView } from './MarkdownContentView';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 type ProfileSubPage =
@@ -44,6 +47,18 @@ export function ProfileWalletView({
   const { user, streak, transactions, updateProfile, simulateFriendReferral, logout, deleteAccount } = useAuth();
   const insets = useSafeAreaInsets();
   const { colors, isDark, themeMode, setThemeMode } = useAppTheme();
+  const { showAlert } = useAlert();
+
+  // Custom theme-aware Alert replacement for native Android Alert.alert
+  const Alert = {
+    alert: (
+      title: string,
+      message?: string,
+      buttons?: StyledAlertButton[]
+    ) => {
+      showAlert(title, message, buttons);
+    },
+  };
 
   // Active Sub-page State (Listing pages separate for all)
   const [activeSubPage, setActiveSubPage] = useState<ProfileSubPage>(null);
@@ -62,6 +77,45 @@ export function ProfileWalletView({
   const [editDepartment, setEditDepartment] = useState(user?.collegeDepartment || '');
   const [editSemester, setEditSemester] = useState(user?.semester || '1');
   const [savingProfile, setSavingProfile] = useState(false);
+
+  // In-App Update State
+  const [checkingUpdate, setCheckingUpdate] = useState(false);
+  const [downloadingUpdate, setDownloadingUpdate] = useState(false);
+
+  // Legal Policies State (Markdown fetched from Web API + Offline Cache)
+  const [policies, setPolicies] = useState<LegalPoliciesData | null>(null);
+  const [loadingPolicies, setLoadingPolicies] = useState<boolean>(false);
+
+  const loadPoliciesData = async (force = false) => {
+    if (loadingPolicies) return;
+    setLoadingPolicies(true);
+    try {
+      const res = await fetchLegalPolicies(force);
+      if (res.data) {
+        setPolicies(res.data);
+      }
+    } catch (err) {
+      console.log('[Policies] load error:', err);
+    } finally {
+      setLoadingPolicies(false);
+    }
+  };
+
+  useEffect(() => {
+    let isMounted = true;
+    if (activeSubPage === 'terms' || activeSubPage === 'privacy' || activeSubPage === 'referral_policy') {
+      fetchLegalPolicies()
+        .then((res) => {
+          if (isMounted && res.data) {
+            setPolicies(res.data);
+          }
+        })
+        .catch(() => {});
+    }
+    return () => {
+      isMounted = false;
+    };
+  }, [activeSubPage]);
 
   // Handle hardware Back button: If in a sub-page, return to profile main view
   useEffect(() => {
@@ -163,11 +217,52 @@ export function ProfileWalletView({
     );
   };
 
-  const handleCheckUpdates = () => {
-    Alert.alert(
-      'App Up to Date',
-      `${appName} v${appVersion} (Build 42) is running the latest production release.`
-    );
+  const handleCheckUpdates = async () => {
+    setCheckingUpdate(true);
+    try {
+      const res = await checkAppUpdate();
+
+      if (res.isDev) {
+        Alert.alert(
+          'Dev Environment',
+          'In-app Over-The-Air (OTA) updates are disabled in development mode. They automatically run in standalone preview and production APK builds without reinstalling.'
+        );
+        return;
+      }
+
+      if (!res.isAvailable) {
+        Alert.alert(
+          'Up to Date ✨',
+          `${appName} v${appVersion} is running the latest version! No update needed at this time.`
+        );
+        return;
+      }
+
+      // New update found!
+      Alert.alert(
+        '🚀 New Update Available!',
+        'A fresh update of AxiomByte has been detected. Would you like to download and restart the app immediately without reinstalling?',
+        [
+          { text: 'Later', style: 'cancel' },
+          {
+            text: 'Download & Restart',
+            style: 'default',
+            onPress: async () => {
+              setDownloadingUpdate(true);
+              const dl = await downloadAndReloadUpdate();
+              setDownloadingUpdate(false);
+              if (!dl.success) {
+                Alert.alert('Update Notice', dl.error || 'Failed to apply update. Please try again.');
+              }
+            },
+          },
+        ]
+      );
+    } catch (e: any) {
+      Alert.alert('Update Error', e?.message || 'Could not reach update service.');
+    } finally {
+      setCheckingUpdate(false);
+    }
   };
 
   const handleOpenWebsite = () => {
@@ -266,7 +361,7 @@ export function ProfileWalletView({
   // RENDER SUB-PAGES (Edit Profile, Wallet, Settings, App Info, Policies)
   // ==========================================================
 
-  const renderSubPageHeader = (title: string) => (
+  const renderSubPageHeader = (title: string, rightAction?: React.ReactNode) => (
     <View
       style={[
         styles.header,
@@ -277,20 +372,23 @@ export function ProfileWalletView({
         },
       ]}>
       <View style={styles.headerTitleRow}>
-        <Pressable
-          onPress={() => setActiveSubPage(null)}
-          style={({ pressed }) => [
-            styles.headerBackBtn,
-            {
-              backgroundColor: colors.cardSecondary,
-              borderColor: colors.border,
-            },
-            pressed && { opacity: 0.7 },
-          ]}
-          hitSlop={8}>
-          <Ionicons name="arrow-back" size={18} color={colors.text} />
-        </Pressable>
-        <Text style={[styles.headerTitle, { color: colors.text }]}>{title}</Text>
+        <View style={styles.headerLeftGroup}>
+          <Pressable
+            onPress={() => setActiveSubPage(null)}
+            style={({ pressed }) => [
+              styles.headerBackBtn,
+              {
+                backgroundColor: colors.cardSecondary,
+                borderColor: colors.border,
+              },
+              pressed && { opacity: 0.7 },
+            ]}
+            hitSlop={8}>
+            <Ionicons name="arrow-back" size={18} color={colors.text} />
+          </Pressable>
+          <Text style={[styles.headerTitle, { color: colors.text }]}>{title}</Text>
+        </View>
+        {rightAction}
       </View>
     </View>
   );
@@ -740,19 +838,103 @@ export function ProfileWalletView({
               <Ionicons name="shield-checkmark-outline" size={18} color="#10B981" />
               <Text style={[styles.subSectionTitle, { color: colors.text }]}>Permissions & Privacy</Text>
             </View>
+            <Text style={[styles.permissionIntroText, { color: colors.textMuted }]}>
+              Transparent disclosure of on-device permissions and privacy architecture:
+            </Text>
 
-            {[
-              { label: 'Storage Engine', val: 'SecureStore (Keystore/Keychain) & Offline Cache' },
-              { label: 'Curriculum Cache', val: 'Complete Offline Delivery' },
-              { label: 'Cloud Backend', val: 'Hostinger Cloud API Sync' },
-              { label: 'User Privacy', val: 'Privacy-Preserving (Zero Third-Party Ads)' },
-              { label: 'Runtime Engine', val: 'React Native 0.88 / Hermes' },
-            ].map((item, idx) => (
-              <View key={idx} style={[styles.specRow, { borderBottomColor: colors.borderSubtle }]}>
-                <Text style={[styles.specLabel, { color: colors.textMuted }]}>{item.label}</Text>
-                <Text style={[styles.specVal, { color: colors.text }]}>{item.val}</Text>
-              </View>
-            ))}
+            <View style={styles.permissionList}>
+              {[
+                {
+                  icon: 'key-outline' as const,
+                  title: 'Hardware Keystore / Keychain',
+                  badge: 'AES-256 Encrypted',
+                  badgeBg: 'rgba(16, 185, 129, 0.12)',
+                  badgeColor: '#10B981',
+                  accentBg: 'rgba(16, 185, 129, 0.15)',
+                  accent: '#10B981',
+                  desc: 'Session credentials, authentication tokens, and verification keys are secured in Android Keystore / iOS Keychain via Expo SecureStore.',
+                },
+                {
+                  icon: 'cloud-done-outline' as const,
+                  title: 'Offline Storage & Cache',
+                  badge: 'On-Device Cache',
+                  badgeBg: 'rgba(59, 130, 246, 0.12)',
+                  badgeColor: '#3B82F6',
+                  accentBg: 'rgba(59, 130, 246, 0.15)',
+                  accent: '#3B82F6',
+                  desc: 'Interactive computer science curriculum, discrete mathematics topics, and code simulations are cached locally on your device for fast offline study.',
+                },
+                {
+                  icon: 'images-outline' as const,
+                  title: 'Camera & Photo Picker',
+                  badge: 'On-Demand Only',
+                  badgeBg: 'rgba(139, 92, 246, 0.12)',
+                  badgeColor: '#8B5CF6',
+                  accentBg: 'rgba(139, 92, 246, 0.15)',
+                  accent: '#8B5CF6',
+                  desc: 'Accessed strictly when you choose to customize your profile avatar or upload homework attachments. Never runs in the background.',
+                },
+                {
+                  icon: 'shield-checkmark-outline' as const,
+                  title: 'Zero Third-Party Trackers',
+                  badge: '100% Private',
+                  badgeBg: 'rgba(16, 185, 129, 0.12)',
+                  badgeColor: '#10B981',
+                  accentBg: 'rgba(16, 185, 129, 0.15)',
+                  accent: '#10B981',
+                  desc: 'No advertising SDKs, no behavioral cookies, and no telemetry selling. Your academic activity remains strictly confidential.',
+                },
+                {
+                  icon: 'globe-outline' as const,
+                  title: 'Cloud Synchronization',
+                  badge: 'TLS 1.3 / HTTPS',
+                  badgeBg: 'rgba(6, 182, 212, 0.12)',
+                  badgeColor: '#06B6D4',
+                  accentBg: 'rgba(6, 182, 212, 0.15)',
+                  accent: '#06B6D4',
+                  desc: 'Synchronizes streak milestones, academic profile, and coin transactions securely with Hostinger Cloud over encrypted HTTPS.',
+                },
+                {
+                  icon: 'cube-outline' as const,
+                  title: 'Runtime Sandboxing',
+                  badge: 'React Native 0.88 / Hermes',
+                  badgeBg: 'rgba(245, 158, 11, 0.12)',
+                  badgeColor: '#F59E0B',
+                  accentBg: 'rgba(245, 158, 11, 0.15)',
+                  accent: '#F59E0B',
+                  desc: 'Runs in an isolated Hermes JavaScript VM with OS-level sandbox protection and zero native telemetry.',
+                },
+              ].map((item, idx) => (
+                <View
+                  key={idx}
+                  style={[
+                    styles.permissionItemCard,
+                    {
+                      backgroundColor: colors.cardSecondary,
+                      borderColor: colors.borderSubtle,
+                    },
+                  ]}>
+                  <View style={styles.permissionItemTopRow}>
+                    <View style={styles.permissionItemTitleGroup}>
+                      <View style={[styles.permissionIconBadge, { backgroundColor: item.accentBg }]}>
+                        <Ionicons name={item.icon} size={15} color={item.accent} />
+                      </View>
+                      <Text style={[styles.permissionItemTitle, { color: colors.text }]}>
+                        {item.title}
+                      </Text>
+                    </View>
+                    <View style={[styles.permissionStatusBadge, { backgroundColor: item.badgeBg }]}>
+                      <Text style={[styles.permissionStatusBadgeText, { color: item.badgeColor }]}>
+                        {item.badge}
+                      </Text>
+                    </View>
+                  </View>
+                  <Text style={[styles.permissionItemDesc, { color: colors.textSecondary }]}>
+                    {item.desc}
+                  </Text>
+                </View>
+              ))}
+            </View>
           </View>
 
           {/* 4. Quick Actions */}
@@ -761,11 +943,18 @@ export function ProfileWalletView({
 
             <Pressable
               onPress={handleCheckUpdates}
+              disabled={checkingUpdate || downloadingUpdate}
               style={[styles.outlineActionBtn, { borderColor: colors.primary, backgroundColor: colors.primaryBg }]}>
-              <Ionicons name="refresh-circle-outline" size={18} color={colors.primary} />
-              <Text style={[styles.outlineActionBtnText, { color: colors.primary }]}>
-                Check for Updates
-              </Text>
+              {checkingUpdate || downloadingUpdate ? (
+                <ActivityIndicator size="small" color={colors.primary} />
+              ) : (
+                <>
+                  <Ionicons name="refresh-circle-outline" size={18} color={colors.primary} />
+                  <Text style={[styles.outlineActionBtnText, { color: colors.primary }]}>
+                    Check for Updates
+                  </Text>
+                </>
+              )}
             </Pressable>
 
             <View style={styles.actionBtnGridRow}>
@@ -839,107 +1028,105 @@ export function ProfileWalletView({
     );
   }
 
-  if (activeSubPage === 'terms') {
+  const renderPolicyContent = (
+    policyKey: 'terms' | 'privacy' | 'referral_policy',
+    defaultTitle: string
+  ) => {
+    const policy = policies ? policies[policyKey] : null;
+    const md = policy?.markdown || '';
+
     return (
       <View style={[styles.container, { backgroundColor: colors.background }]}>
-        {renderSubPageHeader('Terms & Conditions')}
+        {renderSubPageHeader(
+          policy?.title || defaultTitle,
+          <Pressable
+            onPress={() => loadPoliciesData(true)}
+            disabled={loadingPolicies}
+            style={[
+              styles.headerRefreshBtn,
+              { backgroundColor: colors.cardSecondary, borderColor: colors.border },
+            ]}
+            hitSlop={8}>
+            {loadingPolicies ? (
+              <ActivityIndicator size="small" color={colors.primary} />
+            ) : (
+              <Ionicons name="cloud-download-outline" size={17} color={colors.primary} />
+            )}
+          </Pressable>
+        )}
         <ScrollView
           contentContainerStyle={[
             styles.scrollContent,
             { paddingBottom: Math.max(insets.bottom, 24) + 80 },
           ]}
           showsVerticalScrollIndicator={false}>
-          <View style={[styles.cardBlock, { backgroundColor: colors.card, borderColor: colors.border }]}>
-            <Text style={[styles.policyHeading, { color: colors.text }]}>1. Acceptance of Terms</Text>
-            <Text style={[styles.policyParagraph, { color: colors.textSecondary }]}>
-              By creating an account or accessing AxiomByte, you agree to comply with and be bound by these Terms and Conditions. AxiomByte is an educational platform designed for students mastering systems programming, computer science, and discrete mathematics.
-            </Text>
+          {/* Policy Meta Card */}
+          <View
+            style={[
+              styles.policyMetaCard,
+              { backgroundColor: colors.card, borderColor: colors.border },
+            ]}>
+            <View style={styles.policyMetaRow}>
+              <View
+                style={[
+                  styles.policyVersionBadge,
+                  { backgroundColor: colors.primaryBg, borderColor: colors.primary },
+                ]}>
+                <Text style={[styles.policyVersionText, { color: colors.primary }]}>
+                  v{policy?.version || '1.2.0'}
+                </Text>
+              </View>
+              <View style={styles.policySyncIndicator}>
+                <Ionicons name="shield-checkmark" size={13} color="#10B981" />
+                <Text style={[styles.policyLastUpdatedText, { color: colors.textMuted }]}>
+                  {policy?.last_updated ? `Updated: ${policy.last_updated}` : 'AxiomByte Verified'}
+                </Text>
+              </View>
+            </View>
+            {loadingPolicies && !policies ? (
+              <View style={styles.policyLoadingBar}>
+                <ActivityIndicator size="small" color={colors.primary} />
+                <Text style={[styles.policyLoadingText, { color: colors.textMuted }]}>
+                  Synchronizing policy from AxiomByte cloud...
+                </Text>
+              </View>
+            ) : null}
+          </View>
 
-            <Text style={[styles.policyHeading, { color: colors.text }]}>2. Academic Integrity</Text>
-            <Text style={[styles.policyParagraph, { color: colors.textSecondary }]}>
-              All course material, code simulations, and mathematical invariants are provided for educational and pedagogical purposes. Users agree not to utilize automated bots or exploit platform simulation engines.
-            </Text>
-
-            <Text style={[styles.policyHeading, { color: colors.text }]}>3. Coin & Referral Program</Text>
-            <Text style={[styles.policyParagraph, { color: colors.textSecondary }]}>
-              Coins earned through learning streaks, practice modules, and peer invitations are non-transferable outside of authorized platform reward tiers. AxiomByte reserves the right to void coin balances obtained through fraudulent accounts or emulator scripting.
-            </Text>
-
-            <Text style={[styles.policyHeading, { color: colors.text }]}>4. Intellectual Property</Text>
-            <Text style={[styles.policyParagraph, { color: colors.textSecondary }]}>
-              All visual execution steppers, mathematical formulas, and custom interactive curricula are intellectual property of Kauxync Technologies.
-            </Text>
+          {/* Render Markdown Content */}
+          <View
+            style={[
+              styles.cardBlock,
+              {
+                backgroundColor: colors.card,
+                borderColor: colors.border,
+                paddingHorizontal: 16,
+                paddingVertical: 18,
+              },
+            ]}>
+            <MarkdownContentView
+              content={md}
+              colors={colors}
+              isDark={isDark}
+              accentColor={colors.primary}
+              onOpenCodeLab={() => {}}
+            />
           </View>
         </ScrollView>
       </View>
     );
+  };
+
+  if (activeSubPage === 'terms') {
+    return renderPolicyContent('terms', 'Terms & Conditions');
   }
 
   if (activeSubPage === 'privacy') {
-    return (
-      <View style={[styles.container, { backgroundColor: colors.background }]}>
-        {renderSubPageHeader('Privacy Policy')}
-        <ScrollView
-          contentContainerStyle={[
-            styles.scrollContent,
-            { paddingBottom: Math.max(insets.bottom, 24) + 80 },
-          ]}
-          showsVerticalScrollIndicator={false}>
-          <View style={[styles.cardBlock, { backgroundColor: colors.card, borderColor: colors.border }]}>
-            <Text style={[styles.policyHeading, { color: colors.text }]}>1. Offline-First Privacy</Text>
-            <Text style={[styles.policyParagraph, { color: colors.textSecondary }]}>
-              AxiomByte operates on an offline-first architectural model. Your learning activity, code simulation steps, and progress logs are stored locally on your device whenever offline.
-            </Text>
-
-            <Text style={[styles.policyHeading, { color: colors.text }]}>2. Data Synchronization</Text>
-            <Text style={[styles.policyParagraph, { color: colors.textSecondary }]}>
-              When connected to the internet, basic profile information (name, university, department, semester, and coin wallet balance) synchronizes securely with our Hostinger MySQL server over HTTPS/TLS encryption.
-            </Text>
-
-            <Text style={[styles.policyHeading, { color: colors.text }]}>3. Zero Advertising Tracking</Text>
-            <Text style={[styles.policyParagraph, { color: colors.textSecondary }]}>
-              We do not sell, rent, or share student personal data with third-party advertisers or data brokers.
-            </Text>
-          </View>
-        </ScrollView>
-      </View>
-    );
+    return renderPolicyContent('privacy', 'Privacy Policy');
   }
 
   if (activeSubPage === 'referral_policy') {
-    return (
-      <View style={[styles.container, { backgroundColor: colors.background }]}>
-        {renderSubPageHeader('Referral & Reward Policy')}
-        <ScrollView
-          contentContainerStyle={[
-            styles.scrollContent,
-            { paddingBottom: Math.max(insets.bottom, 24) + 80 },
-          ]}
-          showsVerticalScrollIndicator={false}>
-          <View style={[styles.cardBlock, { backgroundColor: colors.card, borderColor: colors.border }]}>
-            <Text style={[styles.policyHeading, { color: colors.text }]}>1. Earning Rules</Text>
-            <Text style={[styles.policyParagraph, { color: colors.textSecondary }]}>
-              Every verified university student receives a unique referral code. When a new peer joins using your code, you receive 200 Coins (₹2.00 INR) and the joining student receives 100 Welcome Coins (₹1.00 INR).
-            </Text>
-
-            <Text style={[styles.policyHeading, { color: colors.text }]}>2. Currency Valuation</Text>
-            <Text style={[styles.policyParagraph, { color: colors.textSecondary }]}>
-              AxiomByte Coins maintain a fixed baseline valuation of 100 Coins = ₹1.00 INR.
-            </Text>
-
-            <Text style={[styles.policyHeading, { color: colors.text }]}>3. Anti-Fraud Protections</Text>
-            <Text style={[styles.policyParagraph, { color: colors.textSecondary }]}>
-              Self-referrals, disposable email addresses, and automated script registrations are filtered by server-side verification and will result in referral disqualification.
-            </Text>
-
-            <Text style={[styles.policyHeading, { color: colors.text }]}>4. Regulatory Compliance & RBI PPI Exemption</Text>
-            <Text style={[styles.policyParagraph, { color: colors.textSecondary }]}>
-              AxiomByte Coins constitute closed-loop promotional reward points designed exclusively for academic motivation. Pursuant to Reserve Bank of India (RBI) guidelines on Prepaid Payment Instruments (PPI Master Direction DPSS.CO.PD.No.1164/02.14.006/2017-18), coins are non-negotiable, non-transferable, and cannot be redeemed for fiat cash withdrawals without statutory identity verification and authorized educational grant partner disbursement.
-            </Text>
-          </View>
-        </ScrollView>
-      </View>
-    );
+    return renderPolicyContent('referral_policy', 'Referral & Reward Policy');
   }
 
   // ==========================================================
@@ -1194,6 +1381,37 @@ export function ProfileWalletView({
             <Ionicons name="chevron-forward" size={17} color={colors.textMuted} />
           </Pressable>
 
+          {/* Item: Check for Updates (OTA) */}
+          <Pressable
+            onPress={handleCheckUpdates}
+            disabled={checkingUpdate || downloadingUpdate}
+            style={({ pressed }) => [
+              styles.listingRow,
+              { borderBottomColor: colors.borderSubtle },
+              pressed && { backgroundColor: colors.cardSecondary },
+            ]}>
+            <View style={styles.listingRowLeft}>
+              <View style={[styles.listIconBox, { backgroundColor: 'rgba(56, 189, 248, 0.12)' }]}>
+                {checkingUpdate || downloadingUpdate ? (
+                  <ActivityIndicator size="small" color="#38BDF8" />
+                ) : (
+                  <Ionicons name="cloud-download-outline" size={20} color="#38BDF8" />
+                )}
+              </View>
+              <View>
+                <Text style={[styles.listingRowTitle, { color: colors.text }]}>Check for Updates</Text>
+                <Text style={[styles.listingRowSub, { color: colors.textSecondary }]}>
+                  {checkingUpdate
+                    ? 'Checking for updates...'
+                    : downloadingUpdate
+                    ? 'Downloading update...'
+                    : 'Auto-update without reinstalling APK'}
+                </Text>
+              </View>
+            </View>
+            <Ionicons name="chevron-forward" size={17} color={colors.textMuted} />
+          </Pressable>
+
           {/* Item 5: Terms & Conditions */}
           <Pressable
             onPress={() => setActiveSubPage('terms')}
@@ -1310,7 +1528,22 @@ const styles = StyleSheet.create({
   headerTitleRow: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
     gap: 12,
+  },
+  headerLeftGroup: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    flex: 1,
+  },
+  headerRefreshBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   headerBackBtn: {
     width: 36,
@@ -1866,15 +2099,20 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: 10,
     borderBottomWidth: 1,
+    gap: 10,
   },
   specLabel: {
     fontFamily: Fonts.mono,
     fontSize: 12,
+    flexShrink: 0,
+    maxWidth: '48%',
   },
   specVal: {
     fontFamily: Fonts.heading,
     fontSize: 13,
     fontWeight: '600',
+    flex: 1,
+    textAlign: 'right',
   },
   appHeroPillsRow: {
     flexDirection: 'row',
@@ -2009,5 +2247,111 @@ const styles = StyleSheet.create({
     fontSize: 13.5,
     lineHeight: 19,
     marginBottom: 8,
+  },
+  policyMetaCard: {
+    borderWidth: 1,
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    marginBottom: 14,
+  },
+  policyMetaRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  policyVersionBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  policyVersionText: {
+    fontFamily: Fonts.mono,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  policySyncIndicator: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+  },
+  policyLastUpdatedText: {
+    fontFamily: Fonts.mono,
+    fontSize: 11.5,
+    fontWeight: '600',
+  },
+  policyLoadingBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 10,
+    paddingTop: 8,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: 'rgba(150, 150, 150, 0.2)',
+  },
+  policyLoadingText: {
+    fontFamily: Fonts.mono,
+    fontSize: 11.5,
+  },
+
+  // Permissions & Privacy Responsive Card Block
+  permissionIntroText: {
+    fontFamily: Fonts.body,
+    fontSize: 13,
+    lineHeight: 18,
+    marginBottom: 12,
+  },
+  permissionList: {
+    gap: 10,
+  },
+  permissionItemCard: {
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 12,
+  },
+  permissionItemTopRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginBottom: 6,
+  },
+  permissionItemTitleGroup: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flexShrink: 1,
+  },
+  permissionIconBadge: {
+    width: 26,
+    height: 26,
+    borderRadius: 7,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  permissionItemTitle: {
+    fontFamily: Fonts.heading,
+    fontSize: 13.5,
+    fontWeight: '700',
+    flexShrink: 1,
+  },
+  permissionStatusBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+  },
+  permissionStatusBadgeText: {
+    fontFamily: Fonts.mono,
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  permissionItemDesc: {
+    fontFamily: Fonts.body,
+    fontSize: 12.5,
+    lineHeight: 18,
   },
 });

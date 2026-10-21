@@ -7,7 +7,6 @@ import {
   Pressable,
   TextInput,
   StyleSheet,
-  Alert,
   Share,
   Dimensions,
   BackHandler,
@@ -18,6 +17,8 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '@/context/AuthContext';
+import { useAlert } from '@/context/AlertContext';
+import { StyledAlertButton } from './StyledAlertModal';
 import { AvatarIcon } from './AvatarPicker';
 import { ReferralModal } from './ReferralModal';
 import { StreakModal } from './StreakModal';
@@ -63,6 +64,17 @@ export function HomeDashboardView({
     isOffline,
     removeActiveCourse,
   } = useCurriculum();
+  const { showAlert } = useAlert();
+
+  const Alert = {
+    alert: (
+      title: string,
+      message?: string,
+      buttons?: StyledAlertButton[]
+    ) => {
+      showAlert(title, message, buttons);
+    },
+  };
 
   // Refresh dynamic user progress on mount / return to home
   useEffect(() => {

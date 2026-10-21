@@ -7,6 +7,7 @@ import { StatusBar } from 'expo-status-bar';
 import { AuthProvider } from '@/context/AuthContext';
 import { ThemeProvider, useAppTheme } from '@/context/ThemeContext';
 import { CurriculumProvider } from '@/context/CurriculumContext';
+import { AlertProvider } from '@/context/AlertContext';
 
 import * as WebBrowser from 'expo-web-browser';
 
@@ -22,7 +23,9 @@ function RootLayoutContent() {
       <StatusBar style={isDark ? 'light' : 'dark'} />
       <AuthProvider>
         <CurriculumProvider>
-          <Slot />
+          <AlertProvider>
+            <Slot />
+          </AlertProvider>
         </CurriculumProvider>
       </AuthProvider>
     </NavThemeProvider>

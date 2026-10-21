@@ -1,8 +1,9 @@
 import React from 'react';
-import { View, Text, StyleSheet, Pressable, Alert } from 'react-native';
+import { View, Text, StyleSheet, Pressable } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
 import { Fonts } from '@/constants/theme';
+import { useAlert } from '@/context/AlertContext';
 
 interface MarkdownContentViewProps {
   content: string;
@@ -19,6 +20,11 @@ export function MarkdownContentView({
   accentColor,
   onOpenCodeLab,
 }: MarkdownContentViewProps) {
+  const { showAlert } = useAlert();
+  const Alert = {
+    alert: (title: string, message?: string) => showAlert(title, message),
+  };
+
   // Parse markdown content line-by-line into blocks
   const blocks = parseMarkdownBlocks(content);
 

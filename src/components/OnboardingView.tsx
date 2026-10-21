@@ -9,13 +9,13 @@ import {
   useWindowDimensions,
   NativeSyntheticEvent,
   NativeScrollEvent,
-  Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '@/context/AuthContext';
 import { Fonts } from '@/constants/theme';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAppTheme } from '@/context/ThemeContext';
+import { useAlert } from '@/context/AlertContext';
 
 interface OnboardingSlide {
   id: string;
@@ -71,6 +71,7 @@ const SLIDES: OnboardingSlide[] = [
 ];
 
 export function OnboardingView({ onFinish }: { onFinish: () => void }) {
+  const { showAlert } = useAlert();
   const [activeSlide, setActiveSlide] = useState(0);
   const [hasAgreedConsent, setHasAgreedConsent] = useState(false);
   const { completeOnboarding } = useAuth();
@@ -100,9 +101,11 @@ export function OnboardingView({ onFinish }: { onFinish: () => void }) {
       setActiveSlide(nextIdx);
     } else {
       if (!hasAgreedConsent) {
-        Alert.alert(
+        showAlert(
           'Terms & Privacy Acceptance',
-          'Please agree to the Terms of Service and Privacy Policy to create your computing workspace.'
+          'Please agree to the Terms of Service and Privacy Policy to create your computing workspace.',
+          undefined,
+          { type: 'warning', buttonText: 'I Understand' }
         );
         return;
       }

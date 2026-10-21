@@ -1,4 +1,5 @@
 import { Platform } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getAuthToken } from './secureStorage';
 
 export const API_BASE_URL = (
@@ -20,6 +21,7 @@ export const API_ENDPOINTS = {
   CODELAB_ITEM: `${API_BASE_URL}/api/codelab_item.php`,
   DELETE_ACCOUNT: `${API_BASE_URL}/api/delete_account.php`,
   STREAK_SYNC: `${API_BASE_URL}/api/streak_sync.php`,
+  POLICIES: `${API_BASE_URL}/api/policies.php`,
 };
 
 /**
@@ -690,5 +692,111 @@ export async function recoverStreakWithFreezeApi(userId: string): Promise<ApiRes
   } catch (err: any) {
     return { success: false, message: err?.message || 'Failed to recover streak' };
   }
+}
+
+export interface LegalPolicyItem {
+  key: string;
+  title: string;
+  version: string;
+  last_updated: string;
+  markdown: string;
+  last_modified?: string;
+}
+
+export interface LegalPoliciesData {
+  terms: LegalPolicyItem;
+  privacy: LegalPolicyItem;
+  referral_policy: LegalPolicyItem;
+  [key: string]: LegalPolicyItem;
+}
+
+const POLICIES_CACHE_STORAGE_KEY = '@axiombyte_legal_policies_cache_v1';
+
+const DEFAULT_OFFLINE_POLICIES: LegalPoliciesData = {
+  terms: {
+    key: 'terms',
+    title: 'Terms & Conditions',
+    version: '1.2.0',
+    last_updated: 'October 2026',
+    markdown: `# Terms & Conditions\n\n*Last Updated: October 2026*\n*Version: 1.2.0*\n*Organization: Kauxync Technologies*\n\n---\n\n## 1. Acceptance of Terms\nBy creating an account, accessing, or downloading **AxiomByte**, you agree to comply with and be bound by these Terms and Conditions. AxiomByte is an interactive educational and research platform engineered for university students, educators, and software engineers mastering computer science, systems programming, and discrete mathematics.\n\n## 2. Pedagogical Scope & Academic Integrity\nAll course materials, code simulations, visual execution steppers, memory layout diagrams, and mathematical invariant proofs are provided solely for educational and training purposes. Users must not deploy automated bots, scrapers, exploit platform simulation engines, or tamper with runtime assets.\n\n## 3. Coin & Referral Program Integrity\nCoins earned through learning streaks, practice modules, and peer invitations constitute closed-loop promotional educational rewards. AxiomByte reserves the right to void coin balances obtained through fraudulent accounts, emulator scripting, or self-referral rings.\n\n## 4. Intellectual Property Rights\nAll visual execution steppers, mathematical algorithms, curriculum taxonomies, UI components, branding, logos, and custom code labs are the exclusive intellectual property of **Kauxync Technologies**.\n\n## 5. Account Management & Termination\nYou are responsible for maintaining the confidentiality of your authentication credentials. AxiomByte provides an in-app **Delete Account** option within Profile settings. Upon confirmed deletion, your personal credentials and associated records are permanently erased.\n\n## 6. Contact & Support\nFor legal inquiries or policy questions: support@kauxync.in\n- Developer Desk: axiombytes@kauxync.in`,
+  },
+  privacy: {
+    key: 'privacy',
+    title: 'Privacy Policy',
+    version: '1.2.0',
+    last_updated: 'October 2026',
+    markdown: `# Privacy Policy\n\n*Last Updated: October 2026*\n*Version: 1.2.0*\n*Organization: Kauxync Technologies*\n\n---\n\n## 1. Offline-First Privacy Guarantee\nAxiomByte is architected as an **offline-first educational platform**. Your learning activity, code simulation steps, topic notes, bookmarks, and local progress logs reside on your physical device. You can study without transmitting continuous background telemetry.\n\n## 2. Information We Collect\nWhen you choose to synchronize your progress with our cloud servers, we collect minimal educational data: Name, username, university email address, university/semester details, and coin/streak counters.\n\n## 3. Zero Advertising & Third-Party Tracking\nWe do not display third-party advertisements. We never sell, rent, or trade student personal information or learning history to data brokers or ad networks.\n\n## 4. Security & Hardware Keystore\nAll network communications are encrypted using modern **TLS 1.3 / HTTPS**. Sensitive authentication tokens are stored locally using **Expo SecureStore**, leveraging hardware-backed Android Keystore or iOS Keychain sandboxes.\n\n## 5. Device Permissions Disclosure\nOnly necessary permissions are requested: Internet (for optional profile sync and updates) and Photo Library (strictly on-demand when setting a profile photo). Zero background location or biometric data is ever accessed.\n\n## 6. Contact & Data Deletion\nFor privacy inquiries: support@kauxync.in\n- Security Desk: axiombytes@kauxync.in`,
+  },
+  referral_policy: {
+    key: 'referral_policy',
+    title: 'Referral & Reward Policy',
+    version: '1.2.0',
+    last_updated: 'October 2026',
+    markdown: `# Referral & Reward Policy\n\n*Last Updated: October 2026*\n*Version: 1.2.0*\n*Organization: Kauxync Technologies*\n\n---\n\n## 1. Overview & Purpose\nThe AxiomByte Referral & Reward Program fosters peer-to-peer collaborative learning in Computer Science, Systems Programming, and Discrete Mathematics across university campuses.\n\n## 2. Referral Rewards & Earning Rules\nEvery registered student receives a distinct Referral Code upon profile setup.\n- **Referrer Reward:** When a new student registers using your valid code and verifies their email, **200 Coins** (₹2.00 INR equivalent) are credited to your wallet.\n- **Invited Peer Welcome Bonus:** The new student receives an initial **100 Welcome Coins** (₹1.00 INR equivalent).\n- **Daily Streak Bonuses:** Check in daily to build multipliers and earn streak shields.\n\n## 3. Valuation & Utility\nAxiomByte Coins maintain a baseline in-app valuation of **100 Coins = ₹1.00 INR**. Coins may be redeemed for streak freeze shields, topic masterclasses, and educational grants.\n\n## 4. Anti-Fraud Protections\nSelf-referrals, disposable email domains, and automated emulator bots are filtered by server-side anomaly detection. Fraudulent accounts will have coins revoked and privileges suspended.\n\n## 5. Regulatory Compliance & RBI PPI Exemption\nAxiomByte Coins constitute closed-loop promotional reward points designed exclusively for academic motivation. Pursuant to Reserve Bank of India (RBI) guidelines on Prepaid Payment Instruments (PPI Master Direction DPSS.CO.PD.No.1164/02.14.006/2017-18), coins are non-negotiable, non-transferable, and cannot be redeemed for fiat cash withdrawals without statutory KYC verification.\n\n## 6. Support & Inquiries\nContact: support@kauxync.in`,
+  },
+};
+
+/**
+ * 15. Fetch Legal Policies (.md content) from Web API with offline local storage cache
+ */
+export async function fetchLegalPolicies(
+  forceRefresh = false
+): Promise<ApiResponse<LegalPoliciesData>> {
+  // First, check if we have a locally cached version in AsyncStorage
+  let cachedPolicies: LegalPoliciesData = DEFAULT_OFFLINE_POLICIES;
+  try {
+    const rawCache = await AsyncStorage.getItem(POLICIES_CACHE_STORAGE_KEY);
+    if (rawCache) {
+      const parsed = JSON.parse(rawCache);
+      if (parsed && parsed.terms && parsed.privacy && parsed.referral_policy) {
+        cachedPolicies = { ...DEFAULT_OFFLINE_POLICIES, ...parsed };
+      }
+    }
+  } catch (cacheErr) {
+    console.warn('[Policies] Cache read note:', cacheErr);
+  }
+
+  // If not force refresh and we have cached policies, try to fetch fresh from server
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 6000);
+
+    const res = await fetch(`${API_ENDPOINTS.POLICIES}?type=all`, {
+      method: 'GET',
+      headers: { Accept: 'application/json' },
+      signal: controller.signal,
+    });
+    clearTimeout(timer);
+
+    if (res.ok) {
+      const json = await res.json();
+      if (json && json.success && json.data) {
+        const freshData: LegalPoliciesData = {
+          ...DEFAULT_OFFLINE_POLICIES,
+          ...json.data,
+        };
+        // Persist to AsyncStorage for instant offline access
+        await AsyncStorage.setItem(
+          POLICIES_CACHE_STORAGE_KEY,
+          JSON.stringify(freshData)
+        );
+        return {
+          success: true,
+          message: 'Policies retrieved from server',
+          data: freshData,
+        };
+      }
+    }
+  } catch (err: any) {
+    // Network offline or server unreachable - graceful fallback to cached/default policies
+    console.log('[Policies] Server fetch skipped/offline, using cached policies:', err?.message);
+  }
+
+  return {
+    success: true,
+    message: 'Loaded from local cache',
+    data: cachedPolicies,
+    isMockFallback: true,
+  };
 }
 

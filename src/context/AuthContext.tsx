@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { AppState, AppStateStatus } from 'react-native';
 import {
   UserProfile,
@@ -95,6 +95,62 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     weeklyActivity: computeCurrentWeekActivity([getLocalDateString()]),
   });
 
+  // Online Streak Check-In (WhatsApp-style automatic check-in when user comes online)
+  const checkInOnlineStreak = useCallback(async (targetUser?: UserProfile | null) => {
+    const activeUser = targetUser !== undefined ? targetUser : user;
+    if (!activeUser?.id) return;
+
+    try {
+      const res = await syncOnlineStreakWithApi(activeUser.id);
+      if (res.success && res.data) {
+        const d = res.data;
+        const currentData = await getStreakData();
+        const updatedHistory = Array.from(new Set([d.lastActiveDate, ...(currentData.historyDates || [])]));
+
+        const syncedStreak: StreakData = {
+          currentStreak: d.currentStreak,
+          longestStreak: d.longestStreak,
+          lastActiveDate: d.lastActiveDate,
+          todayCompleted: d.todayCompleted,
+          freezeCount: d.freezeCount,
+          lostStreak: d.lostStreak,
+          freezeUsedToday: d.freezeUsedToday,
+          streakLostToday: d.streakLostToday,
+          historyDates: updatedHistory,
+          weeklyActivity: computeCurrentWeekActivity(updatedHistory),
+        };
+
+        setStreak(syncedStreak);
+        await saveStreakData(syncedStreak);
+
+        // Update coins if awarded or altered
+        if (d.coins !== undefined && d.coins !== activeUser.coins) {
+          const syncedUser = { ...activeUser, coins: d.coins };
+          setUser(syncedUser);
+          await saveStoredProfile(syncedUser);
+        }
+
+        if (d.coinsAwarded && d.coinsAwarded > 0) {
+          const freshTx = await getTransactions();
+          setTransactions(freshTx);
+        }
+        return;
+      }
+    } catch (e) {
+      if (__DEV__) console.warn('[Streak] Remote sync failed, using offline streak logic:', e);
+    }
+
+    // Local fallback check-in if server is offline
+    const local = await recordDailyStreakActivity();
+    setStreak(local.updatedStreak);
+    if (local.coinsAwarded > 0 && activeUser) {
+      const updatedCoins = activeUser.coins + local.coinsAwarded;
+      const updatedUser = { ...activeUser, coins: updatedCoins };
+      setUser(updatedUser);
+      await saveStoredProfile(updatedUser);
+    }
+  }, [user]);
+
   // Load session & streak from storage on app mount
   useEffect(() => {
     async function initSession() {
@@ -123,7 +179,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
 
     initSession();
-  }, []);
+  }, [checkInOnlineStreak]);
 
   // Sync streak whenever app comes to active foreground
   useEffect(() => {
@@ -532,66 +588,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     };
   };
 
-  /**
-   * Online Streak Check-In (WhatsApp-style automatic check-in when user comes online)
-   * Connects to https://axiombytedb.kauxync.in/api/streak_sync.php
-   * Automatically consumes freeze shield if yesterday was missed,
-   * updates MySQL users table, and keeps database in sync.
-   */
-  const checkInOnlineStreak = async (targetUser?: UserProfile | null) => {
-    const activeUser = targetUser !== undefined ? targetUser : user;
-    if (!activeUser?.id) return;
 
-    try {
-      const res = await syncOnlineStreakWithApi(activeUser.id);
-      if (res.success && res.data) {
-        const d = res.data;
-        const currentData = await getStreakData();
-        const updatedHistory = Array.from(new Set([d.lastActiveDate, ...(currentData.historyDates || [])]));
-
-        const syncedStreak: StreakData = {
-          currentStreak: d.currentStreak,
-          longestStreak: d.longestStreak,
-          lastActiveDate: d.lastActiveDate,
-          todayCompleted: d.todayCompleted,
-          freezeCount: d.freezeCount,
-          lostStreak: d.lostStreak,
-          freezeUsedToday: d.freezeUsedToday,
-          streakLostToday: d.streakLostToday,
-          historyDates: updatedHistory,
-          weeklyActivity: computeCurrentWeekActivity(updatedHistory),
-        };
-
-        setStreak(syncedStreak);
-        await saveStreakData(syncedStreak);
-
-        // Update coins if awarded or altered
-        if (d.coins !== undefined && d.coins !== activeUser.coins) {
-          const syncedUser = { ...activeUser, coins: d.coins };
-          setUser(syncedUser);
-          await saveStoredProfile(syncedUser);
-        }
-
-        if (d.coinsAwarded && d.coinsAwarded > 0) {
-          const freshTx = await getTransactions();
-          setTransactions(freshTx);
-        }
-        return;
-      }
-    } catch (e) {
-      if (__DEV__) console.warn('[Streak] Remote sync failed, using offline streak logic:', e);
-    }
-
-    // Local fallback check-in if server is offline
-    const local = await recordDailyStreakActivity();
-    setStreak(local.updatedStreak);
-    if (local.coinsAwarded > 0 && activeUser) {
-      const updatedCoins = activeUser.coins + local.coinsAwarded;
-      const updatedUser = { ...activeUser, coins: updatedCoins };
-      setUser(updatedUser);
-      await saveStoredProfile(updatedUser);
-    }
-  };
 
   /**
    * Buys a Streak Freeze shield using 50 coins (optionally recovering a lost streak)

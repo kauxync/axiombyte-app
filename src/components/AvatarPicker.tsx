@@ -1,11 +1,12 @@
 import React, { useState } from 'react';
-import { View, Text, Pressable, StyleSheet, ActivityIndicator, Alert } from 'react-native';
+import { View, Text, Pressable, StyleSheet, ActivityIndicator } from 'react-native';
 import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
 import { Ionicons } from '@expo/vector-icons';
 import { Fonts } from '@/constants/theme';
 import { useAppTheme } from '@/context/ThemeContext';
 import { uploadFileToHostinger } from '@/services/api';
+import { useAlert } from '@/context/AlertContext';
 
 export interface AvatarOption {
   id: string;
@@ -101,13 +102,14 @@ export function AvatarPicker({
   onShowAlert?: (title: string, message: string, type: 'error' | 'success' | 'warning' | 'info') => void;
 }) {
   const { colors } = useAppTheme();
+  const { showAlert: contextShowAlert } = useAlert();
   const [uploading, setUploading] = useState(false);
 
   const showAlert = (title: string, message: string, type: 'error' | 'success' | 'warning' | 'info' = 'info') => {
     if (onShowAlert) {
       onShowAlert(title, message, type);
     } else {
-      Alert.alert(title, message);
+      contextShowAlert(title, message, undefined, { type });
     }
   };
 

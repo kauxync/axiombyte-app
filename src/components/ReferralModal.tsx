@@ -7,13 +7,13 @@ import {
   StyleSheet,
   ScrollView,
   Share,
-  Alert,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '@/context/AuthContext';
 import { Fonts } from '@/constants/theme';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAppTheme } from '@/context/ThemeContext';
+import { useAlert } from '@/context/AlertContext';
 
 export function ReferralModal({
   visible,
@@ -25,7 +25,12 @@ export function ReferralModal({
   const { user, transactions } = useAuth();
   const insets = useSafeAreaInsets();
   const { colors } = useAppTheme();
+  const { showAlert } = useAlert();
   const [copied, setCopied] = useState(false);
+
+  const Alert = {
+    alert: (title: string, message?: string) => showAlert(title, message),
+  };
 
   if (!user) return null;
 

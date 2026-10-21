@@ -3,7 +3,7 @@ import { View, Text, ActivityIndicator, StyleSheet } from 'react-native';
 import * as WebBrowser from 'expo-web-browser';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useAuth } from '@/context/AuthContext';
-import { UserProfile, saveStoredProfile, generateReferralCode } from '@/services/storage';
+import { UserProfile, generateReferralCode } from '@/services/storage';
 
 // Intercept active WebBrowser auth sessions immediately
 WebBrowser.maybeCompleteAuthSession({ skipRedirectCheck: true });

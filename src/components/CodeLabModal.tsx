@@ -7,13 +7,13 @@ import {
   Pressable,
   StyleSheet,
   ActivityIndicator,
-  Alert,
   Dimensions,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Fonts } from '@/constants/theme';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { CodeLabModalData } from '@/data/roadmaps/types';
+import { useAlert } from '@/context/AlertContext';
 
 interface CodeLabModalProps {
   visible: boolean;
@@ -37,8 +37,13 @@ export function CodeLabModal({
   isDark,
 }: CodeLabModalProps) {
   const insets = useSafeAreaInsets();
+  const { showAlert } = useAlert();
   const [activeTab, setActiveTab] = useState<'code' | 'howItWorks'>('code');
   const [copied, setCopied] = useState(false);
+
+  const Alert = {
+    alert: (title: string, message?: string) => showAlert(title, message),
+  };
 
   const handleCopy = () => {
     if (!codeLabData?.code) return;
