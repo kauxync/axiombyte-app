@@ -6,8 +6,8 @@ scripts/
 serverweb/
 axiombyte.kauxync.in/
 
-# local font junction
-fonts/
+# local font junction (root level only)
+/fonts/
 
 # Expo
 .expo/
@@ -44,3 +44,4 @@ yarn-error.*
 example/
 /ios/
 /android/
+

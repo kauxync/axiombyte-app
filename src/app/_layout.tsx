@@ -31,16 +31,16 @@ function RootLayoutContent() {
 
 export default function RootLayout() {
   const [fontsLoaded] = useFonts({
-    'Clucks-Regular': require('@/assets/fonts/Clucks-Regular.otf'),
-    'Clucks-Oblique': require('@/assets/fonts/Clucks-Oblique.otf'),
-    'NeulisAlt-Regular': require('@/assets/fonts/NeulisAlt-Regular.otf'),
-    'NeulisAlt-Medium': require('@/assets/fonts/NeulisAlt-Medium.otf'),
-    'NeulisAlt-SemiBold': require('@/assets/fonts/NeulisAlt-SemiBold.otf'),
-    'NeulisAlt-Bold': require('@/assets/fonts/NeulisAlt-Bold.otf'),
-    'TTFirsNeue-Regular': require('@/assets/fonts/TT-Firs-Neue-Regular.ttf'),
-    'TTFirsNeue-Medium': require('@/assets/fonts/TT-Firs-Neue-Medium.ttf'),
-    'TTFirsNeue-DemiBold': require('@/assets/fonts/TT-Firs-Neue-DemiBold.ttf'),
-    'TTFirsNeue-Bold': require('@/assets/fonts/TT-Firs-Neue-Bold.ttf'),
+    'Clucks-Regular': require('../../assets/fonts/Clucks-Regular.otf'),
+    'Clucks-Oblique': require('../../assets/fonts/Clucks-Oblique.otf'),
+    'NeulisAlt-Regular': require('../../assets/fonts/NeulisAlt-Regular.otf'),
+    'NeulisAlt-Medium': require('../../assets/fonts/NeulisAlt-Medium.otf'),
+    'NeulisAlt-SemiBold': require('../../assets/fonts/NeulisAlt-SemiBold.otf'),
+    'NeulisAlt-Bold': require('../../assets/fonts/NeulisAlt-Bold.otf'),
+    'TTFirsNeue-Regular': require('../../assets/fonts/TT-Firs-Neue-Regular.ttf'),
+    'TTFirsNeue-Medium': require('../../assets/fonts/TT-Firs-Neue-Medium.ttf'),
+    'TTFirsNeue-DemiBold': require('../../assets/fonts/TT-Firs-Neue-DemiBold.ttf'),
+    'TTFirsNeue-Bold': require('../../assets/fonts/TT-Firs-Neue-Bold.ttf'),
   });
 
   useEffect(() => {
