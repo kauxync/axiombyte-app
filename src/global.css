@@ -1,9 +1,200 @@
+/* Global CSS & Font-Face declarations for AxiomByte Web */
+
+/* ========================================================
+   TT FIRS NEUE TYPOGRAPHY (Headings & Display)
+   ======================================================== */
+
+/* TTFirsNeue-Bold (700) */
+@font-face {
+  font-family: 'TTFirsNeue-Bold';
+  src: local('TT Firs Neue Bold'), local('TT-Firs-Neue-Bold'), local('TTFirsNeue-Bold'),
+       url('/fonts/TT-Firs-Neue-Bold.ttf') format('truetype');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'TTFirsNeue-Bold';
+  src: local('TT Firs Neue Bold'), local('TT-Firs-Neue-Bold'), local('TTFirsNeue-Bold'),
+       url('/fonts/TT-Firs-Neue-Bold.ttf') format('truetype');
+  font-weight: bold;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'TTFirsNeue-Bold';
+  src: local('TT Firs Neue Bold'), local('TT-Firs-Neue-Bold'), local('TTFirsNeue-Bold'),
+       url('/fonts/TT-Firs-Neue-Bold.ttf') format('truetype');
+  font-weight: normal;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'TTFirsNeue-Bold';
+  src: local('TT Firs Neue Bold'), local('TT-Firs-Neue-Bold'), local('TTFirsNeue-Bold'),
+       url('/fonts/TT-Firs-Neue-Bold.ttf') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* TTFirsNeue-DemiBold (600) */
+@font-face {
+  font-family: 'TTFirsNeue-DemiBold';
+  src: local('TT Firs Neue DemiBold'), local('TT-Firs-Neue-DemiBold'), local('TTFirsNeue-DemiBold'),
+       url('/fonts/TT-Firs-Neue-DemiBold.ttf') format('truetype');
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'TTFirsNeue-DemiBold';
+  src: local('TT Firs Neue DemiBold'), local('TT-Firs-Neue-DemiBold'), local('TTFirsNeue-DemiBold'),
+       url('/fonts/TT-Firs-Neue-DemiBold.ttf') format('truetype');
+  font-weight: normal;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* TTFirsNeue-Medium (500) */
+@font-face {
+  font-family: 'TTFirsNeue-Medium';
+  src: local('TT Firs Neue Medium'), local('TT-Firs-Neue-Medium'), local('TTFirsNeue-Medium'),
+       url('/fonts/TT-Firs-Neue-Medium.ttf') format('truetype');
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'TTFirsNeue-Medium';
+  src: local('TT Firs Neue Medium'), local('TT-Firs-Neue-Medium'), local('TTFirsNeue-Medium'),
+       url('/fonts/TT-Firs-Neue-Medium.ttf') format('truetype');
+  font-weight: normal;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* TTFirsNeue-Regular (400) */
+@font-face {
+  font-family: 'TTFirsNeue-Regular';
+  src: local('TT Firs Neue Regular'), local('TT-Firs-Neue-Regular'), local('TTFirsNeue-Regular'),
+       url('/fonts/TT-Firs-Neue-Regular.ttf') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'TTFirsNeue-Regular';
+  src: local('TT Firs Neue Regular'), local('TT-Firs-Neue-Regular'), local('TTFirsNeue-Regular'),
+       url('/fonts/TT-Firs-Neue-Regular.ttf') format('truetype');
+  font-weight: normal;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* Unified TTFirsNeue family */
+@font-face {
+  font-family: 'TTFirsNeue';
+  src: url('/fonts/TT-Firs-Neue-Regular.ttf') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'TTFirsNeue';
+  src: url('/fonts/TT-Firs-Neue-Medium.ttf') format('truetype');
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'TTFirsNeue';
+  src: url('/fonts/TT-Firs-Neue-DemiBold.ttf') format('truetype');
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'TTFirsNeue';
+  src: url('/fonts/TT-Firs-Neue-Bold.ttf') format('truetype');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* ========================================================
+   NEULIS ALT TYPOGRAPHY (Body & UI text)
+   ======================================================== */
+
+@font-face {
+  font-family: 'NeulisAlt-Regular';
+  src: url('/fonts/NeulisAlt-Regular.otf') format('opentype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'NeulisAlt-Regular';
+  src: url('/fonts/NeulisAlt-Regular.otf') format('opentype');
+  font-weight: normal;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'NeulisAlt-Medium';
+  src: url('/fonts/NeulisAlt-Medium.otf') format('opentype');
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'NeulisAlt-SemiBold';
+  src: url('/fonts/NeulisAlt-SemiBold.otf') format('opentype');
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'NeulisAlt-Bold';
+  src: url('/fonts/NeulisAlt-Bold.otf') format('opentype');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'NeulisAlt-Bold';
+  src: url('/fonts/NeulisAlt-Bold.otf') format('opentype');
+  font-weight: bold;
+  font-style: normal;
+  font-display: swap;
+}
+
 :root {
-  --font-display:
-    Spline Sans, Inter, ui-sans-serif, system-ui, sans-serif, Apple Color Emoji, Segoe UI Emoji,
-    Segoe UI Symbol, Noto Color Emoji;
-  --font-mono:
-    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, Courier New, monospace;
-  --font-rounded: 'SF Pro Rounded', 'Hiragino Maru Gothic ProN', Meiryo, 'MS PGothic', sans-serif;
-  --font-serif: Georgia, 'Times New Roman', serif;
+  --font-heading: 'TTFirsNeue-Bold', 'TTFirsNeue', sans-serif;
+  --font-display: 'TTFirsNeue-Bold', 'TTFirsNeue', sans-serif;
+  --font-body: 'NeulisAlt-Regular', sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+body {
+  font-family: 'NeulisAlt-Regular', sans-serif;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: 'TTFirsNeue-Bold', 'TTFirsNeue', sans-serif;
+  font-weight: 700;
 }

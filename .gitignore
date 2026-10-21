@@ -2,6 +2,14 @@
 
 # dependencies
 node_modules/
+scripts/
+
+# server web backend & web domain (never pushed to GitHub)
+serverweb/
+axiombyte.kauxync.in/
+
+# local font junction
+fonts/
 
 # Expo
 .expo/
@@ -30,8 +38,10 @@ yarn-error.*
 .DS_Store
 *.pem
 
-# local env files
-.env*.local
+# local env files (never commit real credentials)
+.env
+.env.*
+!.env.example
 
 # typescript
 *.tsbuildinfo
