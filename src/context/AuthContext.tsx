@@ -35,6 +35,7 @@ import {
 } from '@/services/api';
 import { signInWithGoogle, signInWithGithub } from '@/services/oauth';
 import { saveAuthToken, deleteAuthToken } from '@/services/secureStorage';
+import { registerDeviceTelemetry } from '@/services/deviceTelemetryService';
 
 interface AuthContextType {
   user: UserProfile | null;
@@ -105,6 +106,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const checkInOnlineStreak = useCallback(async (targetUser?: UserProfile | null) => {
     const activeUser = targetUser !== undefined ? targetUser : userRef.current;
     if (!activeUser?.id) return;
+    registerDeviceTelemetry(activeUser.id).catch(() => {});
 
     try {
       const res = await syncOnlineStreakWithApi(activeUser.id);
@@ -179,6 +181,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         // WhatsApp-style automatic online check-in on app open
         if (storedUser?.id) {
           checkInOnlineStreak(storedUser).catch(() => {});
+          registerDeviceTelemetry(storedUser.id).catch(() => {});
         }
       } catch (err) {
         console.error('Failed to initialize auth session:', err);
