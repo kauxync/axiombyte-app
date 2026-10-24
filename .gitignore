@@ -48,6 +48,10 @@ yarn-error.*
 
 example
 
+# editor directories
+.vscode/
+.claude/
+
 # generated native folders
 /ios
 /android

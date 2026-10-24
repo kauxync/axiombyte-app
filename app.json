@@ -10,6 +10,7 @@
     "ios": {
       "icon": "./assets/expo.icon",
       "bundleIdentifier": "in.kauxync.axiombyte",
+      "buildNumber": "1",
       "associatedDomains": [
         "applinks:axiombyte.kauxync.in"
       ],
@@ -58,6 +59,7 @@
     },
     "android": {
       "package": "in.kauxync.axiombyte",
+      "versionCode": 1,
       "allowBackup": false,
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
@@ -108,7 +110,10 @@
         }
       ],
       "expo-secure-store",
-      "expo-updates"
+      "expo-updates",
+      "expo-notifications",
+      "expo-image",
+      "expo-status-bar"
     ],
     "updates": {
       "url": "https://u.expo.dev/40cd73c4-3e56-4871-a7ff-1241eac367aa",

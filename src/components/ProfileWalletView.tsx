@@ -206,6 +206,7 @@ export function ProfileWalletView({
 
   const appName = Constants.expoConfig?.name || 'AxiomByte';
   const appVersion = Constants.expoConfig?.version || '1.0.0';
+  const appBuildNumber = Constants.expoConfig?.android?.versionCode?.toString() || Constants.expoConfig?.ios?.buildNumber || '1';
   const packageName = Constants.expoConfig?.android?.package || 'in.kauxync.axiombyte';
   const bundleId = Constants.expoConfig?.ios?.bundleIdentifier || 'in.kauxync.axiombyte';
   const appScheme = Constants.expoConfig?.scheme || 'axiombyte';
@@ -742,7 +743,7 @@ export function ProfileWalletView({
             </Text>
             <View style={styles.appHeroPillsRow}>
               <View style={[styles.versionPill, { backgroundColor: colors.cardSecondary, borderColor: colors.border }]}>
-                <Text style={[styles.versionPillText, { color: colors.textSecondary }]}>v{appVersion} • Build 42</Text>
+                <Text style={[styles.versionPillText, { color: colors.textSecondary }]}>v{appVersion} • Build {appBuildNumber}</Text>
               </View>
               <View style={[styles.statusPill, { backgroundColor: 'rgba(16, 185, 129, 0.12)' }]}>
                 <View style={styles.statusDot} />
@@ -766,7 +767,7 @@ export function ProfileWalletView({
               { label: 'Package Name', val: packageName, copyable: true },
               { label: 'Bundle Identifier', val: bundleId },
               { label: 'Version Name', val: appVersion },
-              { label: 'Build Number', val: '42 (Release)' },
+              { label: 'Build Number', val: `${appBuildNumber} (Release)` },
               { label: 'Deep Link Scheme', val: `${appScheme}://` },
               { label: 'Target Platform', val: 'Android / iOS / Web' },
               { label: 'Category', val: 'Education & Engineering' },
@@ -814,112 +815,7 @@ export function ProfileWalletView({
             ))}
           </View>
 
-          {/* 3. System Capabilities & Data Engine */}
-          <View style={[styles.cardBlock, { backgroundColor: colors.card, borderColor: colors.border }]}>
-            <View style={styles.cardHeaderWithIcon}>
-              <Ionicons name="shield-checkmark-outline" size={18} color="#10B981" />
-              <Text style={[styles.subSectionTitle, { color: colors.text }]}>Permissions & Privacy</Text>
-            </View>
-            <Text style={[styles.permissionIntroText, { color: colors.textMuted }]}>
-              Transparent disclosure of on-device permissions and privacy architecture:
-            </Text>
-
-            <View style={styles.permissionList}>
-              {[
-                {
-                  icon: 'key-outline' as const,
-                  title: 'Hardware Keystore / Keychain',
-                  badge: 'AES-256 Encrypted',
-                  badgeBg: 'rgba(16, 185, 129, 0.12)',
-                  badgeColor: '#10B981',
-                  accentBg: 'rgba(16, 185, 129, 0.15)',
-                  accent: '#10B981',
-                  desc: 'Session credentials, authentication tokens, and verification keys are secured in Android Keystore / iOS Keychain via Expo SecureStore.',
-                },
-                {
-                  icon: 'cloud-done-outline' as const,
-                  title: 'Offline Storage & Cache',
-                  badge: 'On-Device Cache',
-                  badgeBg: 'rgba(59, 130, 246, 0.12)',
-                  badgeColor: '#3B82F6',
-                  accentBg: 'rgba(59, 130, 246, 0.15)',
-                  accent: '#3B82F6',
-                  desc: 'Interactive computer science curriculum, discrete mathematics topics, and code simulations are cached locally on your device for fast offline study.',
-                },
-                {
-                  icon: 'images-outline' as const,
-                  title: 'Camera & Photo Picker',
-                  badge: 'On-Demand Only',
-                  badgeBg: 'rgba(139, 92, 246, 0.12)',
-                  badgeColor: '#8B5CF6',
-                  accentBg: 'rgba(139, 92, 246, 0.15)',
-                  accent: '#8B5CF6',
-                  desc: 'Accessed strictly when you choose to customize your profile avatar or upload homework attachments. Never runs in the background.',
-                },
-                {
-                  icon: 'shield-checkmark-outline' as const,
-                  title: 'Zero Third-Party Trackers',
-                  badge: '100% Private',
-                  badgeBg: 'rgba(16, 185, 129, 0.12)',
-                  badgeColor: '#10B981',
-                  accentBg: 'rgba(16, 185, 129, 0.15)',
-                  accent: '#10B981',
-                  desc: 'No advertising SDKs, no behavioral cookies, and no telemetry selling. Your academic activity remains strictly confidential.',
-                },
-                {
-                  icon: 'globe-outline' as const,
-                  title: 'Cloud Synchronization',
-                  badge: 'TLS 1.3 / HTTPS',
-                  badgeBg: 'rgba(6, 182, 212, 0.12)',
-                  badgeColor: '#06B6D4',
-                  accentBg: 'rgba(6, 182, 212, 0.15)',
-                  accent: '#06B6D4',
-                  desc: 'Synchronizes streak milestones, academic profile, and coin transactions securely with Hostinger Cloud over encrypted HTTPS.',
-                },
-                {
-                  icon: 'cube-outline' as const,
-                  title: 'Runtime Sandboxing',
-                  badge: 'React Native 0.88 / Hermes',
-                  badgeBg: 'rgba(245, 158, 11, 0.12)',
-                  badgeColor: '#F59E0B',
-                  accentBg: 'rgba(245, 158, 11, 0.15)',
-                  accent: '#F59E0B',
-                  desc: 'Runs in an isolated Hermes JavaScript VM with OS-level sandbox protection and zero native telemetry.',
-                },
-              ].map((item, idx) => (
-                <View
-                  key={idx}
-                  style={[
-                    styles.permissionItemCard,
-                    {
-                      backgroundColor: colors.cardSecondary,
-                      borderColor: colors.borderSubtle,
-                    },
-                  ]}>
-                  <View style={styles.permissionItemTopRow}>
-                    <View style={styles.permissionItemTitleGroup}>
-                      <View style={[styles.permissionIconBadge, { backgroundColor: item.accentBg }]}>
-                        <Ionicons name={item.icon} size={15} color={item.accent} />
-                      </View>
-                      <Text style={[styles.permissionItemTitle, { color: colors.text }]}>
-                        {item.title}
-                      </Text>
-                    </View>
-                    <View style={[styles.permissionStatusBadge, { backgroundColor: item.badgeBg }]}>
-                      <Text style={[styles.permissionStatusBadgeText, { color: item.badgeColor }]}>
-                        {item.badge}
-                      </Text>
-                    </View>
-                  </View>
-                  <Text style={[styles.permissionItemDesc, { color: colors.textSecondary }]}>
-                    {item.desc}
-                  </Text>
-                </View>
-              ))}
-            </View>
-          </View>
-
-          {/* 4. Quick Actions */}
+          {/* 3. Quick Actions */}
           <View style={[styles.cardBlock, { backgroundColor: colors.card, borderColor: colors.border }]}>
             <Text style={[styles.subSectionTitle, { color: colors.text }]}>Quick Actions</Text>
 
@@ -1091,7 +987,6 @@ export function ProfileWalletView({
               colors={colors}
               isDark={isDark}
               accentColor={colors.primary}
-              onOpenCodeLab={() => {}}
             />
           </View>
         </ScrollView>
@@ -2275,63 +2170,5 @@ const styles = StyleSheet.create({
   policyLoadingText: {
     fontFamily: Fonts.mono,
     fontSize: 11.5,
-  },
-
-  // Permissions & Privacy Responsive Card Block
-  permissionIntroText: {
-    fontFamily: Fonts.body,
-    fontSize: 13,
-    lineHeight: 18,
-    marginBottom: 12,
-  },
-  permissionList: {
-    gap: 10,
-  },
-  permissionItemCard: {
-    borderWidth: 1,
-    borderRadius: 12,
-    padding: 12,
-  },
-  permissionItemTopRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    flexWrap: 'wrap',
-    gap: 6,
-    marginBottom: 6,
-  },
-  permissionItemTitleGroup: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    flexShrink: 1,
-  },
-  permissionIconBadge: {
-    width: 26,
-    height: 26,
-    borderRadius: 7,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  permissionItemTitle: {
-    fontFamily: Fonts.heading,
-    fontSize: 13.5,
-    fontWeight: '700',
-    flexShrink: 1,
-  },
-  permissionStatusBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 8,
-  },
-  permissionStatusBadgeText: {
-    fontFamily: Fonts.mono,
-    fontSize: 11,
-    fontWeight: '700',
-  },
-  permissionItemDesc: {
-    fontFamily: Fonts.body,
-    fontSize: 12.5,
-    lineHeight: 18,
   },
 });

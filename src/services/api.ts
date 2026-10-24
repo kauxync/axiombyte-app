@@ -18,10 +18,10 @@ export const API_ENDPOINTS = {
   CHECK_USERNAME: `${API_BASE_URL}/api/check_username.php`,
   CURRICULUM: `${API_BASE_URL}/api/curriculum.php`,
   TOPIC_CONTENT: `${API_BASE_URL}/api/topic_content.php`,
-  CODELAB_ITEM: `${API_BASE_URL}/api/codelab_item.php`,
   DELETE_ACCOUNT: `${API_BASE_URL}/api/delete_account.php`,
   STREAK_SYNC: `${API_BASE_URL}/api/streak_sync.php`,
   POLICIES: `${API_BASE_URL}/api/policies.php`,
+  REGISTER_DEVICE: `${API_BASE_URL}/api/register_device.php`,
 };
 
 /**

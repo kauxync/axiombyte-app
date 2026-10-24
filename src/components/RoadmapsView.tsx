@@ -33,9 +33,7 @@ import {
   recordLastVisitedTopic,
 } from '@/services/progressService';
 import { MarkdownContentView } from './MarkdownContentView';
-import { CodeLabModal } from './CodeLabModal';
-import { getTopicContent, getCodeLabItem } from '@/services/contentService';
-import { CodeLabModalData } from '@/data/roadmaps/types';
+import { getTopicContent } from '@/services/contentService';
 
 export type { LanguageRoadmap, RoadmapTopic, RoadmapChapter } from '@/data/roadmaps';
 
@@ -88,11 +86,6 @@ export function RoadmapsView({
   const [topicMarkdown, setTopicMarkdown] = useState<string>('');
   const [isLoadingMarkdown, setIsLoadingMarkdown] = useState(false);
 
-  // CodeLab Down-to-Up Modal State
-  const [showCodeLabModal, setShowCodeLabModal] = useState(false);
-  const [activeCodeLabData, setActiveCodeLabData] = useState<CodeLabModalData | null>(null);
-  const [isLoadingCodeLab, setIsLoadingCodeLab] = useState(false);
-
   // Load persistent completed topics on mount
   useEffect(() => {
     loadCompletedLessonIds().then(setCompletedTopicIds);
@@ -139,29 +132,6 @@ export function RoadmapsView({
       isCancelled = true;
     };
   }, [selectedTopicId, currentRoadmap, currentTopic, currentChapter?.id]);
-
-  const handleOpenCodeLab = (codeId: string) => {
-    if (!currentRoadmap) return;
-    setShowCodeLabModal(true);
-    setIsLoadingCodeLab(true);
-    getCodeLabItem(currentRoadmap.id, codeId)
-      .then((data) => {
-        setActiveCodeLabData(data);
-      })
-      .catch(() => {
-        setActiveCodeLabData({
-          codeId,
-          title: codeId.replace(/_/g, ' '),
-          language: currentRoadmap.id,
-          code: currentTopic?.codeSnippet || '// Live code snippet',
-          output: currentTopic?.output || 'Terminal output',
-          howItWorks: currentTopic?.howItWorks || [],
-        });
-      })
-      .finally(() => {
-        setIsLoadingCodeLab(false);
-      });
-  };
 
   // Search & Filter State
   const [searchQuery, setSearchQuery] = useState('');
@@ -433,7 +403,6 @@ export function RoadmapsView({
               colors={colors}
               isDark={isDark}
               accentColor={currentRoadmap.color}
-              onOpenCodeLab={handleOpenCodeLab}
             />
           )}
 
@@ -478,16 +447,6 @@ export function RoadmapsView({
             )}
           </View>
         </ScrollView>
-
-        {/* Down-to-Up CodeLab Modal */}
-        <CodeLabModal
-          visible={showCodeLabModal}
-          codeLabData={activeCodeLabData}
-          isLoading={isLoadingCodeLab}
-          onClose={() => setShowCodeLabModal(false)}
-          colors={colors}
-          isDark={isDark}
-        />
       </View>
     );
   }

@@ -1,16 +1,13 @@
 import React from 'react';
-import { View, Text, StyleSheet, Pressable } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
-import * as Clipboard from 'expo-clipboard';
+import { View, Text, StyleSheet, ScrollView, Linking } from 'react-native';
 import { Fonts } from '@/constants/theme';
-import { useAlert } from '@/context/AlertContext';
+import { InteractiveCodeCard, checkNoRun } from './InteractiveCodeCard';
 
 interface MarkdownContentViewProps {
   content: string;
   colors: any;
   isDark: boolean;
   accentColor: string;
-  onOpenCodeLab: (codeId: string) => void;
 }
 
 export function MarkdownContentView({
@@ -18,24 +15,9 @@ export function MarkdownContentView({
   colors,
   isDark,
   accentColor,
-  onOpenCodeLab,
 }: MarkdownContentViewProps) {
-  const { showAlert } = useAlert();
-  const Alert = {
-    alert: (title: string, message?: string) => showAlert(title, message),
-  };
-
   // Parse markdown content line-by-line into blocks
   const blocks = parseMarkdownBlocks(content);
-
-  const handleCopy = async (code: string) => {
-    try {
-      await Clipboard.setStringAsync(code);
-      Alert.alert('Copied', 'Code snippet copied to clipboard.');
-    } catch {
-      Alert.alert('Notice', 'Unable to copy snippet to clipboard.');
-    }
-  };
 
   return (
     <View style={styles.container}>
@@ -44,14 +26,14 @@ export function MarkdownContentView({
           case 'h1':
             return (
               <Text key={idx} style={[styles.h1, { color: colors.text }]}>
-                {block.text}
+                {renderFormattedInline(block.text, colors, isDark)}
               </Text>
             );
 
           case 'h2':
             return (
               <Text key={idx} style={[styles.h2, { color: colors.text }]}>
-                {block.text}
+                {renderFormattedInline(block.text, colors, isDark)}
               </Text>
             );
 
@@ -59,8 +41,17 @@ export function MarkdownContentView({
             return (
               <View key={idx} style={styles.h3Container}>
                 <View style={[styles.h3AccentBar, { backgroundColor: accentColor }]} />
-                <Text style={[styles.h3, { color: colors.text }]}>{block.text}</Text>
+                <Text style={[styles.h3, { color: colors.text }]}>
+                  {renderFormattedInline(block.text, colors, isDark)}
+                </Text>
               </View>
+            );
+
+          case 'h4':
+            return (
+              <Text key={idx} style={[styles.h4, { color: colors.text }]}>
+                {renderFormattedInline(block.text, colors, isDark)}
+              </Text>
             );
 
           case 'list_item':
@@ -68,75 +59,175 @@ export function MarkdownContentView({
               <View key={idx} style={styles.listItemRow}>
                 <Text style={[styles.bulletDot, { color: accentColor }]}>•</Text>
                 <Text style={[styles.listItemText, { color: colors.textSecondary }]}>
-                  {renderFormattedInline(block.text, colors)}
+                  {renderFormattedInline(block.text, colors, isDark)}
                 </Text>
+              </View>
+            );
+
+          case 'numbered_list':
+            return (
+              <View key={idx} style={styles.listItemRow}>
+                <Text style={[styles.numberBullet, { color: accentColor }]}>{block.num}.</Text>
+                <Text style={[styles.listItemText, { color: colors.textSecondary }]}>
+                  {renderFormattedInline(block.text, colors, isDark)}
+                </Text>
+              </View>
+            );
+
+          case 'blockquote':
+            return (
+              <View
+                key={idx}
+                style={[
+                  styles.blockquote,
+                  {
+                    borderLeftColor: accentColor,
+                    backgroundColor: isDark
+                      ? 'rgba(56, 189, 248, 0.08)'
+                      : 'rgba(56, 189, 248, 0.06)',
+                  },
+                ]}>
+                <Text style={[styles.blockquoteText, { color: colors.textSecondary }]}>
+                  {renderFormattedInline(block.text, colors, isDark)}
+                </Text>
+              </View>
+            );
+
+          case 'hr':
+            return (
+              <View
+                key={idx}
+                style={[
+                  styles.hr,
+                  {
+                    backgroundColor: isDark
+                      ? 'rgba(255, 255, 255, 0.12)'
+                      : 'rgba(0, 0, 0, 0.1)',
+                  },
+                ]}
+              />
+            );
+
+          case 'table':
+            return (
+              <View key={idx} style={styles.tableWrapper}>
+                <ScrollView
+                  horizontal={true}
+                  showsHorizontalScrollIndicator={true}
+                  contentContainerStyle={styles.tableScrollContent}>
+                  <View
+                    style={[
+                      styles.table,
+                      {
+                        borderColor: isDark
+                          ? 'rgba(255, 255, 255, 0.12)'
+                          : 'rgba(0, 0, 0, 0.12)',
+                        backgroundColor: isDark ? '#0A0F1D' : '#F8FAFC',
+                      },
+                    ]}>
+                    {/* Header Row */}
+                    {block.headers && block.headers.length > 0 && (
+                      <View
+                        style={[
+                          styles.tableHeaderRow,
+                          {
+                            backgroundColor: isDark ? '#141E33' : '#E2E8F0',
+                            borderBottomColor: isDark
+                              ? 'rgba(255, 255, 255, 0.12)'
+                              : 'rgba(0, 0, 0, 0.12)',
+                          },
+                        ]}>
+                        {block.headers.map((h, hIdx) => (
+                          <View
+                            key={hIdx}
+                            style={[
+                              styles.tableCell,
+                              styles.tableHeaderCell,
+                              hIdx < block.headers!.length - 1 && {
+                                borderRightWidth: 1,
+                                borderRightColor: isDark
+                                  ? 'rgba(255, 255, 255, 0.1)'
+                                  : 'rgba(0, 0, 0, 0.08)',
+                              },
+                            ]}>
+                            <Text style={[styles.tableHeaderText, { color: colors.text }]}>
+                              {renderFormattedInline(h, colors, isDark)}
+                            </Text>
+                          </View>
+                        ))}
+                      </View>
+                    )}
+
+                    {/* Data Rows */}
+                    {block.rows &&
+                      block.rows.map((row, rIdx) => {
+                        const isEven = rIdx % 2 === 0;
+                        return (
+                          <View
+                            key={rIdx}
+                            style={[
+                              styles.tableRow,
+                              {
+                                backgroundColor: isEven
+                                  ? isDark
+                                    ? '#0D1424'
+                                    : '#FFFFFF'
+                                  : isDark
+                                  ? '#090D18'
+                                  : '#F1F5F9',
+                                borderBottomWidth: rIdx < block.rows!.length - 1 ? 1 : 0,
+                                borderBottomColor: isDark
+                                  ? 'rgba(255, 255, 255, 0.08)'
+                                  : 'rgba(0, 0, 0, 0.06)',
+                              },
+                            ]}>
+                            {row.map((cell, cIdx) => (
+                              <View
+                                key={cIdx}
+                                style={[
+                                  styles.tableCell,
+                                  cIdx < row.length - 1 && {
+                                    borderRightWidth: 1,
+                                    borderRightColor: isDark
+                                      ? 'rgba(255, 255, 255, 0.08)'
+                                      : 'rgba(0, 0, 0, 0.06)',
+                                  },
+                                ]}>
+                                <Text
+                                  style={[
+                                    styles.tableCellText,
+                                    { color: colors.textSecondary },
+                                  ]}>
+                                  {renderFormattedInline(cell, colors, isDark)}
+                                </Text>
+                              </View>
+                            ))}
+                          </View>
+                        );
+                      })}
+                  </View>
+                </ScrollView>
               </View>
             );
 
           case 'code_block':
             return (
-              <View
+              <InteractiveCodeCard
                 key={idx}
-                style={[
-                  styles.codeCard,
-                  { backgroundColor: isDark ? '#090D16' : '#1E293B', borderColor: colors.border },
-                ]}>
-                <View style={styles.codeHeader}>
-                  <View style={styles.codeLangBadge}>
-                    <Ionicons name="code-slash" size={13} color="#38BDF8" />
-                    <Text style={styles.codeLangText}>
-                      {(block.lang || 'c').toUpperCase()}
-                    </Text>
-                  </View>
-                  <Pressable
-                    onPress={() => handleCopy(block.code)}
-                    hitSlop={6}
-                    style={styles.copyBtn}>
-                    <Ionicons name="copy-outline" size={13} color="#94A3B8" />
-                    <Text style={styles.copyBtnText}>Copy</Text>
-                  </Pressable>
-                </View>
-                <Text style={styles.codeText}>{block.code}</Text>
-              </View>
-            );
-
-          case 'codelab_button':
-            return (
-              <Pressable
-                key={idx}
-                onPress={() => onOpenCodeLab(block.codeId)}
-                style={({ pressed }) => [
-                  styles.codelabTriggerBtn,
-                  {
-                    backgroundColor: isDark ? 'rgba(56, 189, 248, 0.12)' : 'rgba(56, 189, 248, 0.16)',
-                    borderColor: '#38BDF8',
-                  },
-                  pressed && { opacity: 0.8, transform: [{ scale: 0.99 }] },
-                ]}>
-                <View style={styles.codelabTriggerLeft}>
-                  <View style={styles.flashIconCircle}>
-                    <Ionicons name="flash" size={15} color="#0284C7" />
-                  </View>
-                  <View>
-                    <Text style={[styles.codelabTriggerTitle, { color: isDark ? '#38BDF8' : '#0369A1' }]}>
-                      Try it / How it works
-                    </Text>
-                    <Text style={[styles.codelabTriggerSub, { color: colors.textMuted }]}>
-                      Inspect live execution, memory state & explanation
-                    </Text>
-                  </View>
-                </View>
-                <View style={styles.upArrowCircle}>
-                  <Ionicons name="chevron-up" size={16} color={isDark ? '#38BDF8' : '#0369A1'} />
-                </View>
-              </Pressable>
+                initialCode={block.code}
+                language={block.lang || 'c'}
+                noRun={block.noRun}
+                colors={colors}
+                isDark={isDark}
+                accentColor={accentColor}
+              />
             );
 
           case 'paragraph':
           default:
             return (
               <Text key={idx} style={[styles.paragraph, { color: colors.textSecondary }]}>
-                {renderFormattedInline(block.text, colors)}
+                {renderFormattedInline(block.text, colors, isDark)}
               </Text>
             );
         }
@@ -147,15 +238,67 @@ export function MarkdownContentView({
 
 // Helpers for block parsing
 interface Block {
-  type: 'h1' | 'h2' | 'h3' | 'paragraph' | 'list_item' | 'code_block' | 'codelab_button';
+  type:
+    | 'h1'
+    | 'h2'
+    | 'h3'
+    | 'h4'
+    | 'paragraph'
+    | 'list_item'
+    | 'numbered_list'
+    | 'code_block'
+    | 'table'
+    | 'blockquote'
+    | 'hr';
   text: string;
   lang?: string;
   code: string;
-  codeId: string;
+  noRun?: boolean;
+  headers?: string[];
+  rows?: string[][];
+  num?: string;
+}
+
+// Strips HTML comments (<!-- ... -->) outside fenced code blocks so editorial/metadata comments do not display
+function stripHtmlCommentsOutsideCodeBlocks(content: string): string {
+  const codeBlockRegex = /```[\s\S]*?(?:```|$)/g;
+  let lastIndex = 0;
+  let result = '';
+  let match: RegExpExecArray | null;
+
+  while ((match = codeBlockRegex.exec(content)) !== null) {
+    const textBefore = content.substring(lastIndex, match.index);
+    result += textBefore.replace(/<!--[\s\S]*?-->/g, '');
+    result += match[0];
+    lastIndex = match.index + match[0].length;
+  }
+
+  const remainder = content.substring(lastIndex);
+  result += remainder.replace(/<!--[\s\S]*?-->/g, '');
+
+  return result;
+}
+
+function isTableRow(line: string): boolean {
+  const trimmed = line.trim();
+  return trimmed.startsWith('|') && trimmed.endsWith('|') && trimmed.length > 2;
+}
+
+function parseCells(line: string): string[] {
+  let str = line.trim();
+  if (str.startsWith('|')) str = str.substring(1);
+  if (str.endsWith('|')) str = str.substring(0, str.length - 1);
+  return str.split('|').map((c) => c.trim());
+}
+
+function isDividerRow(cells: string[]): boolean {
+  if (cells.length === 0) return false;
+  return cells.every((c) => /^:?-+:?$/.test(c.trim()));
 }
 
 function parseMarkdownBlocks(content: string): Block[] {
-  const lines = content.split('\n');
+  const sanitizedContent = stripHtmlCommentsOutsideCodeBlocks(content);
+  const lines = sanitizedContent.split('\n');
   const blocks: Block[] = [];
   let inCodeBlock = false;
   let codeBuffer: string[] = [];
@@ -168,19 +311,21 @@ function parseMarkdownBlocks(content: string): Block[] {
     // Fenced Code Block Toggle
     if (trimmed.startsWith('```')) {
       if (inCodeBlock) {
+        const { isNoRun, cleanLang } = checkNoRun(codeLang);
+
         blocks.push({
           type: 'code_block',
           text: '',
           code: codeBuffer.join('\n'),
-          lang: codeLang || 'c',
-          codeId: '',
+          lang: cleanLang,
+          noRun: isNoRun,
         });
         inCodeBlock = false;
         codeBuffer = [];
         codeLang = '';
       } else {
         inCodeBlock = true;
-        codeLang = trimmed.replace('```', '').trim();
+        codeLang = trimmed.replace(/^`+/, '').trim();
       }
       continue;
     }
@@ -192,17 +337,70 @@ function parseMarkdownBlocks(content: string): Block[] {
 
     if (trimmed === '') continue;
 
-    // Check for "Try it / How it works" link/button
-    // Examples: [Try it / How it works](codelab:c_apps_intro)
-    // or [Try it or How it works](codelab:c_apps_intro)
-    // or [How it works](codelab:c_apps_intro)
-    const codelabMatch = trimmed.match(/\[.*?\]\((?:codelab:|\/codelab\/|codelab:\/\/)?([a-zA-Z0-9_-]+)\)/i);
-    if (codelabMatch) {
+    // Filter out any legacy codelab links from markdown
+    if (/\[.*?\]\((?:codelab:|\/codelab\/|codelab:\/\/)?([a-zA-Z0-9_-]+)\)/i.test(trimmed)) {
+      continue;
+    }
+
+    // Horizontal Rule
+    if (/^(?:-{3,}|\*{3,}|_{3,})$/.test(trimmed)) {
       blocks.push({
-        type: 'codelab_button',
+        type: 'hr',
         text: '',
         code: '',
-        codeId: codelabMatch[1],
+      });
+      continue;
+    }
+
+    // Markdown Table Detection
+    if (isTableRow(trimmed)) {
+      const tableLines: string[] = [];
+      while (i < lines.length && isTableRow(lines[i].trim())) {
+        tableLines.push(lines[i].trim());
+        i++;
+      }
+      i--; // Adjust index
+
+      if (tableLines.length > 0) {
+        const rawHeaders = parseCells(tableLines[0]);
+        const headers: string[] = rawHeaders;
+        const rows: string[][] = [];
+        let startIdx = 1;
+
+        if (tableLines.length > 1) {
+          const secondRowCells = parseCells(tableLines[1]);
+          if (isDividerRow(secondRowCells)) {
+            startIdx = 2;
+          }
+        }
+
+        for (let r = startIdx; r < tableLines.length; r++) {
+          rows.push(parseCells(tableLines[r]));
+        }
+
+        blocks.push({
+          type: 'table',
+          text: '',
+          code: '',
+          headers,
+          rows,
+        });
+        continue;
+      }
+    }
+
+    // Blockquote Detection (groups multiple consecutive blockquote lines)
+    if (trimmed.startsWith('>')) {
+      const quoteLines: string[] = [];
+      while (i < lines.length && lines[i].trim().startsWith('>')) {
+        quoteLines.push(lines[i].trim().replace(/^>\s?/, ''));
+        i++;
+      }
+      i--; // Adjust index
+      blocks.push({
+        type: 'blockquote',
+        text: quoteLines.join('\n'),
+        code: '',
       });
       continue;
     }
@@ -213,7 +411,6 @@ function parseMarkdownBlocks(content: string): Block[] {
         type: 'h1',
         text: trimmed.replace(/^#\s+/, ''),
         code: '',
-        codeId: '',
       });
       continue;
     }
@@ -223,7 +420,6 @@ function parseMarkdownBlocks(content: string): Block[] {
         type: 'h2',
         text: trimmed.replace(/^##\s+/, ''),
         code: '',
-        codeId: '',
       });
       continue;
     }
@@ -233,7 +429,27 @@ function parseMarkdownBlocks(content: string): Block[] {
         type: 'h3',
         text: trimmed.replace(/^###\s+/, ''),
         code: '',
-        codeId: '',
+      });
+      continue;
+    }
+
+    if (trimmed.startsWith('#### ')) {
+      blocks.push({
+        type: 'h4',
+        text: trimmed.replace(/^####\s+/, ''),
+        code: '',
+      });
+      continue;
+    }
+
+    // Numbered List Items
+    const numMatch = trimmed.match(/^(\d+)\.\s+(.*)/);
+    if (numMatch) {
+      blocks.push({
+        type: 'numbered_list',
+        text: numMatch[2],
+        num: numMatch[1],
+        code: '',
       });
       continue;
     }
@@ -244,7 +460,6 @@ function parseMarkdownBlocks(content: string): Block[] {
         type: 'list_item',
         text: trimmed.replace(/^[*•-]\s+/, ''),
         code: '',
-        codeId: '',
       });
       continue;
     }
@@ -254,49 +469,122 @@ function parseMarkdownBlocks(content: string): Block[] {
       type: 'paragraph',
       text: trimmed,
       code: '',
-      codeId: '',
     });
   }
 
   // Handle trailing unclosed code block safely
   if (inCodeBlock && codeBuffer.length > 0) {
+    const { isNoRun, cleanLang } = checkNoRun(codeLang);
+
     blocks.push({
       type: 'code_block',
       text: '',
       code: codeBuffer.join('\n'),
-      lang: codeLang || 'c',
-      codeId: '',
+      lang: cleanLang,
+      noRun: isNoRun,
     });
   }
 
   return blocks;
 }
 
-// Basic inline text formatting (bold **text**, inline `code`)
-function renderFormattedInline(text: string, colors: any) {
-  const parts = text.split(/(\*\*.*?\*\*|`.*?`)/g);
+function isSafeUrl(url?: string): boolean {
+  if (!url) return false;
+  const trimmed = url.trim().toLowerCase();
+  return (
+    trimmed.startsWith('https://') ||
+    trimmed.startsWith('http://') ||
+    trimmed.startsWith('mailto:')
+  );
+}
+
+// Inline text formatting: links [text](url), bold **text**, inline `code`, italic *text* or _text_
+function renderFormattedInline(text: string, colors: any, isDark: boolean) {
+  const parts = text.split(
+    /(\[.+?\]\(.+?\)|(?:\*\*|__)(?:.+?)(?:\*\*|__)|`[^`]+`|\*(?:[^*]+)\*|_(?:[^_]+)_)/g
+  );
 
   return parts.map((part, index) => {
-    if (part.startsWith('**') && part.endsWith('**')) {
+    // 1. Clickable Link: [text](url) with safe URL validation (blocks javascript:, file:, data: schemes)
+    if (part.startsWith('[') && part.includes('](') && part.endsWith(')')) {
+      const linkMatch = part.match(/^\[(.*?)\]\((.*?)\)$/);
+      if (linkMatch) {
+        const [, linkText, linkUrl] = linkMatch;
+        const safe = isSafeUrl(linkUrl);
+        return (
+          <Text
+            key={index}
+            onPress={() => {
+              if (safe) {
+                Linking.openURL(linkUrl.trim()).catch(() => {});
+              }
+            }}
+            style={{
+              color: safe ? colors.primary : colors.textMuted,
+              textDecorationLine: safe ? 'underline' : 'none',
+              fontFamily: Fonts.bodyMedium,
+              fontWeight: '600',
+            }}>
+            {linkText}
+          </Text>
+        );
+      }
+    }
+
+    // 2. Bold text: **bold** or __bold__
+    if (
+      (part.startsWith('**') && part.endsWith('**')) ||
+      (part.startsWith('__') && part.endsWith('__'))
+    ) {
       return (
-        <Text key={index} style={{ fontFamily: Fonts.heading, fontWeight: '700', color: colors.text }}>
+        <Text
+          key={index}
+          style={{
+            fontFamily: Fonts.headingDemiBold,
+            fontWeight: '700',
+            color: colors.text,
+          }}>
           {part.slice(2, -2)}
         </Text>
       );
     }
+
+    // 3. Inline code: `code`
     if (part.startsWith('`') && part.endsWith('`')) {
       return (
         <Text
           key={index}
           style={{
             fontFamily: Fonts.mono,
-            backgroundColor: colors.cardSecondary,
+            fontSize: 13,
+            backgroundColor: isDark
+              ? 'rgba(255, 255, 255, 0.08)'
+              : 'rgba(0, 0, 0, 0.06)',
             color: colors.primary,
           }}>
           {` ${part.slice(1, -1)} `}
         </Text>
       );
     }
+
+    // 4. Italic text: *italic* or _italic_
+    if (
+      (part.startsWith('*') && part.endsWith('*')) ||
+      (part.startsWith('_') && part.endsWith('_'))
+    ) {
+      return (
+        <Text
+          key={index}
+          style={{
+            fontFamily: Fonts.body,
+            fontStyle: 'italic',
+            color: colors.textSecondary,
+          }}>
+          {part.slice(1, -1)}
+        </Text>
+      );
+    }
+
     return <Text key={index}>{part}</Text>;
   });
 }
@@ -337,6 +625,12 @@ const styles = StyleSheet.create({
     fontSize: 15,
     letterSpacing: -0.2,
   },
+  h4: {
+    fontFamily: Fonts.headingDemiBold,
+    fontSize: 14,
+    fontWeight: '600',
+    marginTop: 4,
+  },
   paragraph: {
     fontFamily: Fonts.body,
     fontSize: 15,
@@ -352,102 +646,78 @@ const styles = StyleSheet.create({
     fontSize: 18,
     lineHeight: 22,
   },
+  numberBullet: {
+    fontFamily: Fonts.mono,
+    fontSize: 13,
+    fontWeight: '700',
+    minWidth: 22,
+    paddingTop: 1,
+  },
   listItemText: {
     flex: 1,
     fontFamily: Fonts.body,
     fontSize: 14,
     lineHeight: 21,
   },
-  codeCard: {
-    borderRadius: 12,
-    borderWidth: 1,
-    overflow: 'hidden',
-    marginTop: 4,
-    marginBottom: 6,
-  },
-  codeHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    backgroundColor: 'rgba(0, 0, 0, 0.25)',
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255, 255, 255, 0.06)',
-  },
-  codeLangBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  codeLangText: {
-    fontFamily: Fonts.mono,
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#94A3B8',
-  },
-  copyBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 4,
-    backgroundColor: 'rgba(255, 255, 255, 0.08)',
-  },
-  copyBtnText: {
-    fontFamily: Fonts.bodyMedium,
-    fontSize: 11,
-    color: '#94A3B8',
-  },
-  codeText: {
-    fontFamily: Fonts.mono,
-    fontSize: 13,
-    lineHeight: 20,
-    color: '#E2E8F0',
-    padding: 14,
-  },
-  codelabTriggerBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
+  blockquote: {
+    borderLeftWidth: 4,
+    paddingVertical: 10,
     paddingHorizontal: 14,
-    paddingVertical: 12,
-    borderRadius: 14,
-    borderWidth: 1.5,
-    marginVertical: 6,
+    borderRadius: 8,
+    marginVertical: 4,
   },
-  codelabTriggerLeft: {
+  blockquoteText: {
+    fontFamily: Fonts.body,
+    fontSize: 14,
+    fontStyle: 'italic',
+    lineHeight: 21,
+  },
+  hr: {
+    height: 1,
+    marginVertical: 10,
+    width: '100%',
+  },
+  tableWrapper: {
+    marginVertical: 8,
+    borderRadius: 10,
+    overflow: 'hidden',
+  },
+  tableScrollContent: {
+    paddingVertical: 2,
+  },
+  table: {
+    borderWidth: 1,
+    borderRadius: 10,
+    overflow: 'hidden',
+  },
+  tableHeaderRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
-    flex: 1,
+    borderBottomWidth: 1,
   },
-  flashIconCircle: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: 'rgba(56, 189, 248, 0.2)',
+  tableRow: {
+    flexDirection: 'row',
     alignItems: 'center',
+  },
+  tableCell: {
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    minWidth: 110,
+    maxWidth: 280,
     justifyContent: 'center',
   },
-  codelabTriggerTitle: {
-    fontFamily: Fonts.heading,
-    fontSize: 14,
+  tableHeaderCell: {
+    minWidth: 110,
+    paddingVertical: 10,
+  },
+  tableHeaderText: {
+    fontFamily: Fonts.headingDemiBold,
+    fontSize: 13,
     fontWeight: '700',
-    letterSpacing: -0.2,
   },
-  codelabTriggerSub: {
+  tableCellText: {
     fontFamily: Fonts.body,
-    fontSize: 12,
-    marginTop: 2,
-  },
-  upArrowCircle: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: 'rgba(56, 189, 248, 0.18)',
-    alignItems: 'center',
-    justifyContent: 'center',
+    fontSize: 13,
+    lineHeight: 19,
   },
 });

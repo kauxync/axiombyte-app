@@ -8,6 +8,8 @@ import { AuthProvider } from '@/context/AuthContext';
 import { ThemeProvider, useAppTheme } from '@/context/ThemeContext';
 import { CurriculumProvider } from '@/context/CurriculumContext';
 import { AlertProvider } from '@/context/AlertContext';
+import { requestNotificationPermission } from '@/services/notificationService';
+import { registerDeviceTelemetry } from '@/services/deviceTelemetryService';
 
 import * as WebBrowser from 'expo-web-browser';
 
@@ -17,6 +19,13 @@ SplashScreen.preventAutoHideAsync().catch(() => {});
 function RootLayoutContent() {
   const { resolvedTheme } = useAppTheme();
   const isDark = resolvedTheme === 'dark';
+
+  useEffect(() => {
+    // 1. Request notification permission on app initialization
+    requestNotificationPermission().catch(() => {});
+    // 2. Register anonymous device installation telemetry
+    registerDeviceTelemetry().catch(() => {});
+  }, []);
 
   return (
     <NavThemeProvider value={isDark ? DarkTheme : DefaultTheme}>

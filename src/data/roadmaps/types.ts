@@ -46,12 +46,3 @@ export interface LanguageProgress {
   percent: number;
   isCompleted: boolean;
 }
-
-export interface CodeLabModalData {
-  codeId: string;
-  title?: string;
-  language?: string;
-  code: string;
-  output: string;
-  howItWorks: string[];
-}

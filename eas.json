@@ -1,7 +1,7 @@
 {
   "cli": {
     "version": ">= 14.0.0",
-    "appVersionSource": "remote"
+    "appVersionSource": "local"
   },
   "build": {
     "development": {
@@ -13,6 +13,12 @@
       },
       "ios": {
         "simulator": true
+      },
+      "env": {
+        "EXPO_PUBLIC_API_BASE_URL": "https://axiombytedb.kauxync.in",
+        "EXPO_PUBLIC_OAUTH_BROKER_URL": "https://axiombyte.kauxync.in",
+        "EXPO_PUBLIC_GOOGLE_CLIENT_ID": "940376527917-93llf6m2uun7se1s0olgl6o0j2ban1bq.apps.googleusercontent.com",
+        "EXPO_PUBLIC_GITHUB_CLIENT_ID": "Ov23liLgSBwqXIr9mEmV"
       }
     },
     "preview": {
@@ -34,7 +40,7 @@
     "production": {
       "distribution": "store",
       "channel": "production",
-      "autoIncrement": true,
+      "autoIncrement": false,
       "android": {
         "buildType": "app-bundle"
       },

@@ -418,7 +418,6 @@ export function SubjectsNotesView({
               colors={colors}
               isDark={isDark}
               accentColor={currentSubject.color}
-              onOpenCodeLab={() => {}}
             />
           )}
 
