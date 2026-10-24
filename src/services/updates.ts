@@ -7,9 +7,36 @@ export interface AppUpdateCheckResult {
   manifest?: any;
 }
 
+type UpdateEventListener = (isAvailable: boolean) => void;
+const updateListeners = new Set<UpdateEventListener>();
+
+/**
+ * Register a listener to be notified immediately when a mandatory update is detected.
+ */
+export function onUpdateAvailable(listener: UpdateEventListener): () => void {
+  updateListeners.add(listener);
+  return () => {
+    updateListeners.delete(listener);
+  };
+}
+
+/**
+ * Manually broadcast that a mandatory update is available.
+ */
+export function notifyUpdateAvailable() {
+  for (const listener of updateListeners) {
+    try {
+      listener(true);
+    } catch (e) {
+      console.error('[Updates] Listener failed:', e);
+    }
+  }
+}
+
 /**
  * Checks if a new Over-The-Air (OTA) update is available on EAS.
  * In development builds (__DEV__), updates are not available.
+ * If an update is available, all registered mandatory update listeners are notified.
  */
 export async function checkAppUpdate(): Promise<AppUpdateCheckResult> {
   if (__DEV__) {
@@ -30,8 +57,12 @@ export async function checkAppUpdate(): Promise<AppUpdateCheckResult> {
 
   try {
     const update = await Updates.checkForUpdateAsync();
+    const isAvailable = !!update.isAvailable;
+    if (isAvailable) {
+      notifyUpdateAvailable();
+    }
     return {
-      isAvailable: !!update.isAvailable,
+      isAvailable,
       isDev: false,
       manifest: update.manifest,
     };
@@ -59,7 +90,7 @@ export async function downloadAndReloadUpdate(): Promise<{ success: boolean; err
       await Updates.reloadAsync();
       return { success: true };
     }
-    return { success: false, error: 'No new update bundle returned.' };
+    return { success: false, error: 'No new update bundle returned from server.' };
   } catch (err: any) {
     return { success: false, error: err?.message || 'Failed to download update bundle.' };
   }
@@ -78,4 +109,3 @@ export function getCurrentUpdateInfo() {
     createdAt: Updates.createdAt ? new Date(Updates.createdAt).toLocaleString() : null,
   };
 }
-

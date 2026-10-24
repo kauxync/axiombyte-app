@@ -50,7 +50,7 @@ const localOtpStore = new Map<string, { code: string; expiresAt: number }>();
 export async function checkServerStatus(): Promise<ApiResponse> {
   try {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 6000);
+    const timer = setTimeout(() => controller.abort(), 15000);
     const res = await fetch(API_ENDPOINTS.STATUS, { signal: controller.signal });
     clearTimeout(timer);
     return await res.json();
@@ -619,19 +619,40 @@ export interface RemoteStreakPayload {
   message?: string;
 }
 
+function getClientCalendarDate(): string {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function getClientTimezone(): string {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Kolkata';
+  } catch {
+    return 'Asia/Kolkata';
+  }
+}
+
 /**
  * 12. Online Streak Check-In & Sync (WhatsApp-style automatic check-in on coming online)
  */
 export async function syncOnlineStreakWithApi(userId: string): Promise<ApiResponse<RemoteStreakPayload>> {
   try {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 8000);
+    const timer = setTimeout(() => controller.abort(), 15000);
 
     const authHeader = await getAuthHeader();
     const res = await fetch(API_ENDPOINTS.STREAK_SYNC, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...authHeader },
-      body: JSON.stringify({ userId, action: 'online_checkin' }),
+      body: JSON.stringify({
+        userId,
+        action: 'online_checkin',
+        clientDate: getClientCalendarDate(),
+        timezone: getClientTimezone(),
+      }),
       signal: controller.signal,
     });
     clearTimeout(timer);
@@ -654,13 +675,19 @@ export async function purchaseStreakFreezeApi(
 ): Promise<ApiResponse<RemoteStreakPayload>> {
   try {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 8000);
+    const timer = setTimeout(() => controller.abort(), 15000);
 
     const authHeader = await getAuthHeader();
     const res = await fetch(API_ENDPOINTS.STREAK_SYNC, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...authHeader },
-      body: JSON.stringify({ userId, action: 'purchase_freeze', recoverLost }),
+      body: JSON.stringify({
+        userId,
+        action: 'purchase_freeze',
+        recoverLost,
+        clientDate: getClientCalendarDate(),
+        timezone: getClientTimezone(),
+      }),
       signal: controller.signal,
     });
     clearTimeout(timer);
@@ -677,13 +704,18 @@ export async function purchaseStreakFreezeApi(
 export async function recoverStreakWithFreezeApi(userId: string): Promise<ApiResponse<RemoteStreakPayload>> {
   try {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 8000);
+    const timer = setTimeout(() => controller.abort(), 15000);
 
     const authHeader = await getAuthHeader();
     const res = await fetch(API_ENDPOINTS.STREAK_SYNC, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...authHeader },
-      body: JSON.stringify({ userId, action: 'recover_streak' }),
+      body: JSON.stringify({
+        userId,
+        action: 'recover_streak',
+        clientDate: getClientCalendarDate(),
+        timezone: getClientTimezone(),
+      }),
       signal: controller.signal,
     });
     clearTimeout(timer);
@@ -691,6 +723,37 @@ export async function recoverStreakWithFreezeApi(userId: string): Promise<ApiRes
     return await res.json();
   } catch (err: any) {
     return { success: false, message: err?.message || 'Failed to recover streak' };
+  }
+}
+
+/**
+ * 15. Record active practice completion directly with cloud streak engine
+ */
+export async function recordDailyStreakActivityApi(userId: string): Promise<ApiResponse<RemoteStreakPayload>> {
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 15000);
+
+    const authHeader = await getAuthHeader();
+    const res = await fetch(API_ENDPOINTS.STREAK_SYNC, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeader },
+      body: JSON.stringify({
+        userId,
+        action: 'record_activity',
+        clientDate: getClientCalendarDate(),
+        timezone: getClientTimezone(),
+      }),
+      signal: controller.signal,
+    });
+    clearTimeout(timer);
+
+    if (res.ok) {
+      return await res.json();
+    }
+    return { success: false, message: 'Could not record streak activity with server' };
+  } catch (err: any) {
+    return { success: false, message: err?.message || 'Offline activity recorded' };
   }
 }
 
@@ -759,7 +822,7 @@ export async function fetchLegalPolicies(
   // If not force refresh and we have cached policies, try to fetch fresh from server
   try {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 6000);
+    const timer = setTimeout(() => controller.abort(), 15000);
 
     const res = await fetch(`${API_ENDPOINTS.POLICIES}?type=all`, {
       method: 'GET',

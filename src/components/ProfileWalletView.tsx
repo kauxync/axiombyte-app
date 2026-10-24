@@ -17,13 +17,14 @@ import { useAuth } from '@/context/AuthContext';
 import { useAlert } from '@/context/AlertContext';
 import { StyledAlertButton } from './StyledAlertModal';
 import { AvatarIcon, AvatarPicker } from './AvatarPicker';
+import { AppIcon } from './AppIcon';
 import { StreakModal } from './StreakModal';
 import { ReferralModal } from './ReferralModal';
 import { Fonts } from '@/constants/theme';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAppTheme } from '@/context/ThemeContext';
 import { checkServerStatus, fetchLegalPolicies, LegalPoliciesData } from '@/services/api';
-import { checkAppUpdate, downloadAndReloadUpdate } from '@/services/updates';
+import { checkAppUpdate, notifyUpdateAvailable } from '@/services/updates';
 import { MarkdownContentView } from './MarkdownContentView';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
@@ -80,7 +81,6 @@ export function ProfileWalletView({
 
   // In-App Update State
   const [checkingUpdate, setCheckingUpdate] = useState(false);
-  const [downloadingUpdate, setDownloadingUpdate] = useState(false);
 
   // Legal Policies State (Markdown fetched from Web API + Offline Cache)
   const [policies, setPolicies] = useState<LegalPoliciesData | null>(null);
@@ -238,26 +238,8 @@ export function ProfileWalletView({
         return;
       }
 
-      // New update found!
-      Alert.alert(
-        '🚀 New Update Available!',
-        'A fresh update of AxiomByte has been detected. Would you like to download and restart the app immediately without reinstalling?',
-        [
-          { text: 'Later', style: 'cancel' },
-          {
-            text: 'Download & Restart',
-            style: 'default',
-            onPress: async () => {
-              setDownloadingUpdate(true);
-              const dl = await downloadAndReloadUpdate();
-              setDownloadingUpdate(false);
-              if (!dl.success) {
-                Alert.alert('Update Notice', dl.error || 'Failed to apply update. Please try again.');
-              }
-            },
-          },
-        ]
-      );
+      // New update found! Updates are mandatory and cannot be skipped.
+      notifyUpdateAvailable();
     } catch (e: any) {
       Alert.alert('Update Error', e?.message || 'Could not reach update service.');
     } finally {
@@ -753,7 +735,7 @@ export function ProfileWalletView({
           {/* Logo & Version Hero */}
           <View style={[styles.appInfoHero, { backgroundColor: colors.card, borderColor: colors.border }]}>
             <View style={[styles.appLogoCircle, { backgroundColor: colors.primaryBg, borderColor: colors.primary }]}>
-              <Ionicons name="terminal" size={36} color={colors.primary} />
+              <AppIcon size={42} />
             </View>
             <Text style={[styles.appInfoTitle, { color: colors.text }]}>
               {appName.slice(0, 5)}<Text style={{ color: colors.primary }}>{appName.slice(5) || 'Byte'}</Text>
@@ -943,9 +925,9 @@ export function ProfileWalletView({
 
             <Pressable
               onPress={handleCheckUpdates}
-              disabled={checkingUpdate || downloadingUpdate}
+              disabled={checkingUpdate}
               style={[styles.outlineActionBtn, { borderColor: colors.primary, backgroundColor: colors.primaryBg }]}>
-              {checkingUpdate || downloadingUpdate ? (
+              {checkingUpdate ? (
                 <ActivityIndicator size="small" color={colors.primary} />
               ) : (
                 <>
@@ -1384,7 +1366,7 @@ export function ProfileWalletView({
           {/* Item: Check for Updates (OTA) */}
           <Pressable
             onPress={handleCheckUpdates}
-            disabled={checkingUpdate || downloadingUpdate}
+            disabled={checkingUpdate}
             style={({ pressed }) => [
               styles.listingRow,
               { borderBottomColor: colors.borderSubtle },
@@ -1392,7 +1374,7 @@ export function ProfileWalletView({
             ]}>
             <View style={styles.listingRowLeft}>
               <View style={[styles.listIconBox, { backgroundColor: 'rgba(56, 189, 248, 0.12)' }]}>
-                {checkingUpdate || downloadingUpdate ? (
+                {checkingUpdate ? (
                   <ActivityIndicator size="small" color="#38BDF8" />
                 ) : (
                   <Ionicons name="cloud-download-outline" size={20} color="#38BDF8" />
@@ -1403,8 +1385,6 @@ export function ProfileWalletView({
                 <Text style={[styles.listingRowSub, { color: colors.textSecondary }]}>
                   {checkingUpdate
                     ? 'Checking for updates...'
-                    : downloadingUpdate
-                    ? 'Downloading update...'
                     : 'Auto-update without reinstalling APK'}
                 </Text>
               </View>

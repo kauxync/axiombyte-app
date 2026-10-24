@@ -16,6 +16,7 @@ import { Fonts } from '@/constants/theme';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAppTheme } from '@/context/ThemeContext';
 import { useAlert } from '@/context/AlertContext';
+import { AppIcon } from './AppIcon';
 
 interface OnboardingSlide {
   id: string;
@@ -158,7 +159,7 @@ export function OnboardingView({ onFinish }: { onFinish: () => void }) {
       <View style={styles.topBar}>
         <View style={styles.logoRow}>
           <View style={[styles.logoIcon, { backgroundColor: colors.primaryBg }]}>
-            <Ionicons name="terminal" size={16} color={colors.primary} />
+            <AppIcon size={20} />
           </View>
           <Text style={[styles.logoText, { color: colors.text }]}>
             Axiom<Text style={{ color: colors.primary }}>Byte</Text>

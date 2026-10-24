@@ -1,11 +1,14 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, ActivityIndicator, AppState, AppStateStatus } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '@/context/AuthContext';
 import { OnboardingView } from './OnboardingView';
 import { LoginView } from './LoginView';
 import { CompleteProfileView } from './CompleteProfileView';
 import { MainAppLayout } from './MainAppLayout';
+import { AppIcon } from './AppIcon';
+import { MandatoryUpdateModal } from './MandatoryUpdateModal';
+import { checkAppUpdate, onUpdateAvailable } from '@/services/updates';
 
 import { Fonts } from '@/constants/theme';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -15,6 +18,7 @@ export function AppOrchestrator() {
   const { isLoading, isOnboarded, isAuthenticated, isProfileComplete } = useAuth();
   const { colors, isDark } = useAppTheme();
   const [showSplash, setShowSplash] = useState(true);
+  const [mandatoryUpdateVisible, setMandatoryUpdateVisible] = useState(false);
   const insets = useSafeAreaInsets();
 
   // Keep branded splash visible for at least 1.5s for polished presentation
@@ -26,97 +30,139 @@ export function AppOrchestrator() {
     return () => clearTimeout(timer);
   }, []);
 
-  if (isLoading || showSplash) {
-    return (
-      <View
-        style={[
-          styles.splashContainer,
-          {
-            backgroundColor: colors.background,
-            paddingTop: Math.max(insets.top, 24) + 16,
-            paddingBottom: Math.max(insets.bottom, 24) + 12,
-          },
-        ]}>
-        <View style={styles.splashContent}>
-          {/* Top domain pill */}
-          <View
-            style={[
-              styles.domainBadge,
-              {
-                backgroundColor: colors.primaryBg,
-                borderColor: `${colors.primary}40`,
-              },
-            ]}>
-            <Ionicons name="sparkles" size={12} color={colors.primary} />
-            <Text style={[styles.domainBadgeText, { color: colors.primary }]}>
-              SYSTEMS COMPUTATION & FORMAL LOGIC
+  // Check for OTA updates on launch and whenever app returns to active foreground
+  useEffect(() => {
+    // 1. Subscribe to any detected update across the entire app
+    const unsubscribe = onUpdateAvailable((isAvail) => {
+      if (isAvail) {
+        setMandatoryUpdateVisible(true);
+      }
+    });
+
+    // 2. Initial check on startup
+    checkAppUpdate().then((res) => {
+      if (res.isAvailable) {
+        setMandatoryUpdateVisible(true);
+      }
+    }).catch(() => {});
+
+    // 3. Re-check whenever the app comes back to foreground
+    const sub = AppState.addEventListener('change', (status: AppStateStatus) => {
+      if (status === 'active') {
+        checkAppUpdate().then((res) => {
+          if (res.isAvailable) {
+            setMandatoryUpdateVisible(true);
+          }
+        }).catch(() => {});
+      }
+    });
+
+    return () => {
+      unsubscribe();
+      sub.remove();
+    };
+  }, []);
+
+  const renderContent = () => {
+    if (isLoading || showSplash) {
+      return (
+        <View
+          style={[
+            styles.splashContainer,
+            {
+              backgroundColor: colors.background,
+              paddingTop: Math.max(insets.top, 24) + 16,
+              paddingBottom: Math.max(insets.bottom, 24) + 12,
+            },
+          ]}>
+          <View style={styles.splashContent}>
+            {/* Top domain pill */}
+            <View
+              style={[
+                styles.domainBadge,
+                {
+                  backgroundColor: colors.primaryBg,
+                  borderColor: `${colors.primary}40`,
+                },
+              ]}>
+              <Ionicons name="sparkles" size={12} color={colors.primary} />
+              <Text style={[styles.domainBadgeText, { color: colors.primary }]}>
+                SYSTEMS COMPUTATION & FORMAL LOGIC
+              </Text>
+            </View>
+
+            {/* Logo Icon Ring */}
+            <View
+              style={[
+                styles.logoCircle,
+                {
+                  backgroundColor: colors.card,
+                  borderColor: isDark ? 'rgba(56, 189, 248, 0.35)' : 'rgba(2, 132, 199, 0.30)',
+                },
+              ]}>
+              <AppIcon size={56} />
+            </View>
+
+            {/* Upgraded Font Style, Size & Family for Heading */}
+            <Text style={[styles.splashBrand, { color: colors.text }]}>
+              Axiom<Text style={[styles.splashBrandAccent, { color: colors.primary }]}>Byte</Text>
             </Text>
+
+            {/* Upgraded Subtitle Font */}
+            <Text style={[styles.splashTagline, { color: colors.textSecondary }]}>
+              Computer Science & Discrete Mathematics
+            </Text>
+
+            {/* Loading Indicator Pill */}
+            <View
+              style={[
+                styles.loadingBox,
+                {
+                  backgroundColor: colors.card,
+                  borderColor: colors.border,
+                },
+              ]}>
+              <ActivityIndicator size="small" color={colors.primary} />
+              <Text style={[styles.loadingText, { color: colors.textSecondary }]}>
+                Initializing Local Runtime & Memory Engine...
+              </Text>
+            </View>
           </View>
 
-          {/* Logo Icon Ring */}
-          <View
-            style={[
-              styles.logoCircle,
-              {
-                backgroundColor: colors.card,
-                borderColor: isDark ? 'rgba(56, 189, 248, 0.35)' : 'rgba(2, 132, 199, 0.30)',
-              },
-            ]}>
-            <Ionicons name="terminal" size={44} color={colors.primary} />
-          </View>
-
-          {/* Upgraded Font Style, Size & Family for Heading */}
-          <Text style={[styles.splashBrand, { color: colors.text }]}>
-            Axiom<Text style={[styles.splashBrandAccent, { color: colors.primary }]}>Byte</Text>
-          </Text>
-
-          {/* Upgraded Subtitle Font */}
-          <Text style={[styles.splashTagline, { color: colors.textSecondary }]}>
-            Computer Science & Discrete Mathematics
-          </Text>
-
-          {/* Loading Indicator Pill */}
-          <View
-            style={[
-              styles.loadingBox,
-              {
-                backgroundColor: colors.card,
-                borderColor: colors.border,
-              },
-            ]}>
-            <ActivityIndicator size="small" color={colors.primary} />
-            <Text style={[styles.loadingText, { color: colors.textSecondary }]}>
-              Initializing Local Runtime & Memory Engine...
+          <View style={styles.splashFooter}>
+            <Text style={[styles.footerVersion, { color: colors.textMuted }]}>
+              v1.0.0 • Offline-First Native Engine
             </Text>
           </View>
         </View>
+      );
+    }
 
-        <View style={styles.splashFooter}>
-          <Text style={[styles.footerVersion, { color: colors.textMuted }]}>
-            v1.0.0 • Offline-First Native Engine
-          </Text>
-        </View>
-      </View>
-    );
-  }
+    // 1. If user hasn't seen onboarding, show the 4-slide onboarding
+    if (!isOnboarded) {
+      return <OnboardingView onFinish={() => {}} />;
+    }
 
-  // 1. If user hasn't seen onboarding, show the 4-slide onboarding
-  if (!isOnboarded) {
-    return <OnboardingView onFinish={() => {}} />;
-  }
+    // 2. If user is not authenticated, show Login/Signup
+    if (!isAuthenticated) {
+      return <LoginView onLoggedIn={() => {}} />;
+    }
 
-  // 2. If user is not authenticated, show Login/Signup
-  if (!isAuthenticated) {
-    return <LoginView onLoggedIn={() => {}} />;
-  }
+    // 3. If user is authenticated but profile is incomplete, show Complete Profile
+    if (!isProfileComplete) {
+      return <CompleteProfileView onComplete={() => {}} />;
+    }
 
-  // 3. If user is authenticated but profile is incomplete, show Complete Profile
-  if (!isProfileComplete) {
-    return <CompleteProfileView onComplete={() => {}} />;
-  }
+    // 4. Default: User is fully authenticated with complete profile -> Main App Layout with Bottom Navigation!
+    return <MainAppLayout />;
+  };
 
-  // 4. Default: User is fully authenticated with complete profile -> Main App Layout with Bottom Navigation!
-  return <MainAppLayout />;
+  return (
+    <>
+      {renderContent()}
+      <MandatoryUpdateModal visible={mandatoryUpdateVisible} />
+    </>
+  );
 }
 
 const styles = StyleSheet.create({

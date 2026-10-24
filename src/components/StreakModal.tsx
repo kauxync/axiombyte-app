@@ -204,13 +204,13 @@ export function StreakModal({ visible, onClose, onPracticePress }: StreakModalPr
               <View style={styles.sectionHeader}>
                 <Text style={[styles.sectionLabel, { color: colors.textMuted }]}>THIS WEEK</Text>
                 <Text style={[styles.sectionValue, { color: colors.primary }]}>
-                  {streak.weeklyActivity.filter(Boolean).length}/7 Days Active
+                  {(streak.weeklyActivity || []).filter(Boolean).length}/7 Days Active
                 </Text>
               </View>
 
               <View style={styles.weekGrid}>
                 {WEEK_DAYS.map((letter, idx) => {
-                  const isActive = !!streak.weeklyActivity[idx];
+                  const isActive = !!(streak.weeklyActivity || [])[idx];
                   const isToday = idx === todayWeekIndex;
 
                   return (

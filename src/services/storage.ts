@@ -233,19 +233,23 @@ export async function getStreakData(): Promise<StreakData> {
     }
 
     const data: StreakData = JSON.parse(raw);
-    const history = data.historyDates || [data.lastActiveDate];
+    const history = data.historyDates || (data.lastActiveDate ? [data.lastActiveDate] : []);
 
     // Check if user is active today
     if (data.lastActiveDate === today) {
       data.todayCompleted = true;
-      data.weeklyActivity = computeCurrentWeekActivity(history);
+      const fullHistory = Array.from(new Set([today, ...history]));
+      data.historyDates = fullHistory;
+      data.weeklyActivity = computeCurrentWeekActivity(fullHistory);
       return data;
     }
 
     // Check if user was active yesterday (streak alive, but needs activity today)
     if (data.lastActiveDate === yesterday) {
       data.todayCompleted = false;
-      data.weeklyActivity = computeCurrentWeekActivity(history);
+      const cleanHistory = history.filter((d) => d !== today);
+      data.historyDates = cleanHistory;
+      data.weeklyActivity = computeCurrentWeekActivity(cleanHistory);
       return data;
     }
 

@@ -7,7 +7,7 @@ import {
   Pressable,
   StyleSheet,
   ActivityIndicator,
-  Dimensions,
+  useWindowDimensions,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Fonts } from '@/constants/theme';
@@ -25,8 +25,6 @@ interface CodeLabModalProps {
   isDark: boolean;
 }
 
-const { height: SCREEN_HEIGHT } = Dimensions.get('window');
-
 export function CodeLabModal({
   visible,
   codeLabData,
@@ -37,6 +35,7 @@ export function CodeLabModal({
   isDark,
 }: CodeLabModalProps) {
   const insets = useSafeAreaInsets();
+  const { height: windowHeight } = useWindowDimensions();
   const { showAlert } = useAlert();
   const [activeTab, setActiveTab] = useState<'code' | 'howItWorks'>('code');
   const [copied, setCopied] = useState(false);
@@ -67,6 +66,7 @@ export function CodeLabModal({
           style={[
             styles.sheetContainer,
             {
+              height: Math.round(windowHeight * 0.70),
               backgroundColor: colors.card,
               borderColor: colors.border,
               paddingBottom: Math.max(insets.bottom, 16) + 12,
@@ -86,26 +86,7 @@ export function CodeLabModal({
                   {codeLabData?.title || 'How It Works & Live Execution'}
                 </Text>
               </View>
-              {codeLabData?.codeId && (
-                <View style={styles.badgeRow}>
-                  <View style={[styles.codeIdBadge, { backgroundColor: colors.cardSecondary }]}>
-                    <Text style={[styles.codeIdText, { color: colors.primary }]}>
-                      ID: {codeLabData.codeId}
-                    </Text>
-                  </View>
-                  <Text style={[styles.langText, { color: colors.textMuted }]}>
-                    {(codeLabData.language || 'c').toUpperCase()}
-                  </Text>
-                </View>
-              )}
             </View>
-
-            <Pressable
-              onPress={onClose}
-              hitSlop={8}
-              style={[styles.closeBtn, { backgroundColor: colors.cardSecondary }]}>
-              <Ionicons name="close" size={18} color={colors.text} />
-            </Pressable>
           </View>
 
           {/* Segment Tab Selector */}
@@ -275,8 +256,7 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderLeftWidth: 1,
     borderRightWidth: 1,
-    maxHeight: SCREEN_HEIGHT * 0.88,
-    minHeight: SCREEN_HEIGHT * 0.55,
+    height: '70%',
     paddingHorizontal: 20,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: -4 },
@@ -309,34 +289,6 @@ const styles = StyleSheet.create({
     fontSize: 17,
     fontWeight: '700',
     letterSpacing: -0.3,
-  },
-  badgeRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginTop: 4,
-  },
-  codeIdBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 6,
-  },
-  codeIdText: {
-    fontFamily: Fonts.mono,
-    fontSize: 11,
-    fontWeight: '600',
-  },
-  langText: {
-    fontFamily: Fonts.mono,
-    fontSize: 11,
-    fontWeight: '700',
-  },
-  closeBtn: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    alignItems: 'center',
-    justifyContent: 'center',
   },
   tabBar: {
     flexDirection: 'row',

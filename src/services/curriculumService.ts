@@ -70,13 +70,13 @@ export async function loadCachedCurriculum(): Promise<CurriculumPayload> {
 /**
  * Internal helper to fetch latest curriculum from remote Web API
  */
-async function fetchCurriculumFromNetwork(): Promise<CurriculumPayload | null> {
+async function fetchCurriculumFromNetwork(forceFresh?: boolean): Promise<CurriculumPayload | null> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 12000); // 12s timeout for mobile handshake
+  const timer = setTimeout(() => controller.abort(), 25000); // 25s timeout for mobile handshake
 
   try {
     // Cache-busting timestamp param guarantees fresh fetch without triggering CORS preflights
-    const fetchUrl = `${API_ENDPOINTS.CURRICULUM}?_t=${Date.now()}`;
+    const fetchUrl = `${API_ENDPOINTS.CURRICULUM}?_t=${Date.now()}${forceFresh ? '&force=1' : ''}`;
 
     const res = await fetch(fetchUrl, {
       method: 'GET',
@@ -89,7 +89,10 @@ async function fetchCurriculumFromNetwork(): Promise<CurriculumPayload | null> {
 
     if (res.status === 304) {
       // 304 Not Modified: server confirmed cached payload is identical and fresh
-      return await loadCachedCurriculum();
+      const cached = await loadCachedCurriculum();
+      if (cached && cached.languages && cached.languages.length > 0) {
+        return cached;
+      }
     }
 
     if (res.ok) {
@@ -136,11 +139,11 @@ export async function syncCurriculumWithServer(forceFresh?: boolean): Promise<{
   isOffline: boolean;
 }> {
   // First attempt
-  let payload = await fetchCurriculumFromNetwork();
+  let payload = await fetchCurriculumFromNetwork(forceFresh);
 
   // Automatic retry if first attempt encountered network/TLS latency
   if (!payload) {
-    payload = await fetchCurriculumFromNetwork();
+    payload = await fetchCurriculumFromNetwork(forceFresh);
   }
 
   if (payload) {

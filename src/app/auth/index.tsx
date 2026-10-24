@@ -4,6 +4,7 @@ import * as WebBrowser from 'expo-web-browser';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useAuth } from '@/context/AuthContext';
 import { UserProfile, generateReferralCode } from '@/services/storage';
+import { AppIcon } from '@/components/AppIcon';
 
 // Intercept active WebBrowser auth sessions immediately
 WebBrowser.maybeCompleteAuthSession({ skipRedirectCheck: true });
@@ -127,10 +128,11 @@ export default function UniversalAuthCallbackScreen() {
     }
 
     handleDeepLink();
-  }, [params, router, user]);
+  }, [params, router, user, setAuthenticatedUser]);
 
   return (
     <View style={styles.container}>
+      <AppIcon size={56} style={{ marginBottom: 20 }} />
       <ActivityIndicator size="large" color="#208AEF" />
       <Text style={styles.title}>AxiomByte Universal Auth</Text>
       <Text style={styles.subtitle}>{message}</Text>

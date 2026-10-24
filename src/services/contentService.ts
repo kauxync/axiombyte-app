@@ -54,7 +54,7 @@ export async function getTopicContent(linkPath: string): Promise<string> {
   // 3. Fetch fresh markdown from remote Web API
   try {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 8000);
+    const timer = setTimeout(() => controller.abort(), 20000);
 
     const url = `${API_ENDPOINTS.TOPIC_CONTENT}?path=${encodeURIComponent(normalizedPath)}`;
     const res = await fetch(url, {
@@ -121,7 +121,7 @@ export async function getCodeLabItem(
   // 3. Fetch from remote Web API
   try {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 8000);
+    const timer = setTimeout(() => controller.abort(), 20000);
 
     const url = `${API_ENDPOINTS.CODELAB_ITEM}?lang=${encodeURIComponent(language)}&code_id=${encodeURIComponent(codeId)}`;
     const res = await fetch(url, {

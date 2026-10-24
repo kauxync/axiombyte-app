@@ -17,6 +17,7 @@ import { useAuth } from '@/context/AuthContext';
 import { Fonts } from '@/constants/theme';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAppTheme } from '@/context/ThemeContext';
+import { AppIcon } from './AppIcon';
 
 export function LoginView({ onLoggedIn }: { onLoggedIn: () => void }) {
   const {
@@ -272,7 +273,7 @@ export function LoginView({ onLoggedIn }: { onLoggedIn: () => void }) {
                   borderColor: `${colors.primary}40`,
                 },
               ]}>
-              <Ionicons name="terminal" size={24} color={colors.primary} />
+              <AppIcon size={32} />
             </View>
             <Text style={[styles.appName, { color: colors.text }]}>
               Axiom<Text style={{ color: colors.primary }}>Byte</Text>

@@ -158,6 +158,27 @@ export async function toggleLessonCompletion(lessonId: string): Promise<string[]
 }
 
 /**
+ * Ensures a specific lesson/topic is marked as completed.
+ * If already completed, returns existing list without duplicate.
+ * If newly completed, appends it, saves to storage, and returns { updated, newlyCompleted: true }.
+ */
+export async function markLessonCompleted(
+  lessonId: string
+): Promise<{ updated: string[]; newlyCompleted: boolean }> {
+  try {
+    const current = await loadCompletedLessonIds();
+    if (!current.includes(lessonId)) {
+      const updated = [...current, lessonId];
+      await AsyncStorage.setItem(STORAGE_KEY_COMPLETED_LESSONS, JSON.stringify(updated));
+      return { updated, newlyCompleted: true };
+    }
+    return { updated: current, newlyCompleted: false };
+  } catch {
+    return { updated: [], newlyCompleted: false };
+  }
+}
+
+/**
  * Checks whether a specific topic/lesson is completed
  */
 export function isLessonCompleted(lessonId: string, completedIds: string[]): boolean {

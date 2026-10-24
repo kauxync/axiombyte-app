@@ -2,6 +2,7 @@ import React, { useEffect } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Platform, ActivityIndicator } from 'react-native';
 import { useRouter } from 'expo-router';
 import * as WebBrowser from 'expo-web-browser';
+import { AppIcon } from '@/components/AppIcon';
 
 export default function NotFoundScreen() {
   const router = useRouter();
@@ -29,6 +30,7 @@ export default function NotFoundScreen() {
   if (isOAuthRedirect) {
     return (
       <View style={styles.container}>
+        <AppIcon size={56} style={{ marginBottom: 20 }} />
         <ActivityIndicator size="large" color="#208AEF" />
         <Text style={styles.title}>Resolving Authentication...</Text>
         <Text style={styles.subtitle}>Connecting you to AxiomByte...</Text>
@@ -38,6 +40,7 @@ export default function NotFoundScreen() {
 
   return (
     <View style={styles.container}>
+      <AppIcon size={64} style={{ marginBottom: 20 }} />
       <Text style={styles.code}>404</Text>
       <Text style={styles.title}>Page Not Found</Text>
       <Text style={styles.subtitle}>The requested screen could not be located.</Text>

@@ -4,6 +4,7 @@ import * as WebBrowser from 'expo-web-browser';
 import { useRouter } from 'expo-router';
 import { authWithOAuth } from '@/services/api';
 import { saveStoredProfile, UserProfile, generateReferralCode } from '@/services/storage';
+import { AppIcon } from '@/components/AppIcon';
 
 // Intercept popup completions immediately
 WebBrowser.maybeCompleteAuthSession({ skipRedirectCheck: true });
@@ -88,6 +89,7 @@ export default function GoogleAuthCallbackScreen() {
 
   return (
     <View style={styles.container}>
+      <AppIcon size={56} style={{ marginBottom: 20 }} />
       <ActivityIndicator size="large" color="#208AEF" />
       <Text style={styles.title}>{statusText}</Text>
       <Text style={styles.subtitle}>Please wait while AxiomByte verifies your account.</Text>

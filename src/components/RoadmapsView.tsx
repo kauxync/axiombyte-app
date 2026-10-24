@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -9,6 +9,8 @@ import {
   ActivityIndicator,
   BackHandler,
   TextInput,
+  NativeSyntheticEvent,
+  NativeScrollEvent,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Fonts } from '@/constants/theme';
@@ -25,6 +27,7 @@ import {
 import {
   loadCompletedLessonIds,
   toggleLessonCompletion,
+  markLessonCompleted,
   isLessonCompleted,
   calculateLanguageProgress,
   recordLastVisitedTopic,
@@ -63,7 +66,7 @@ export function RoadmapsView({
 } = {}) {
   const insets = useSafeAreaInsets();
   const { colors, isDark } = useAppTheme();
-  const { languages, isLoading, isOffline, refreshCurriculum } = useCurriculum();
+  const { languages, isLoading, isOffline, refreshCurriculum, refreshProgress } = useCurriculum();
 
   // Navigation State within Roadmaps
   // null = Languages list; string = Language Chapters view; topicId = Topic Study Detail view
@@ -280,9 +283,57 @@ export function RoadmapsView({
     return results;
   }, [searchQuery, languages]);
 
+  const hasScrolledDownRef = useRef(false);
+
+  useEffect(() => {
+    hasScrolledDownRef.current = false;
+  }, [selectedTopicId]);
+
+  const handleAutoMarkComplete = useCallback(async (topicId: string) => {
+    if (!topicId) return;
+    const { updated, newlyCompleted } = await markLessonCompleted(topicId);
+    if (newlyCompleted) {
+      setCompletedTopicIds(updated);
+      refreshProgress().catch(() => {});
+    }
+  }, [refreshProgress]);
+
+  const handleTopicScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    const { layoutMeasurement, contentOffset, contentSize } = event.nativeEvent;
+    
+    // User must actively scroll past 150px to register reading action
+    if (contentOffset.y > 150) {
+      hasScrolledDownRef.current = true;
+    }
+
+    // Only mark complete if content is scrollable, user actually scrolled, and reached bottom
+    const isScrollable = contentSize.height > layoutMeasurement.height + 60;
+    const reachedBottom = layoutMeasurement.height + contentOffset.y >= contentSize.height - 40;
+
+    if (
+      selectedTopicId &&
+      isScrollable &&
+      hasScrolledDownRef.current &&
+      reachedBottom
+    ) {
+      handleAutoMarkComplete(selectedTopicId);
+    }
+  };
+
+  const handleNavigateNextTopic = async (nextId: string) => {
+    // Only mark the current topic that was just read
+    const readTopicId = selectedTopicId;
+    if (readTopicId) {
+      await handleAutoMarkComplete(readTopicId);
+    }
+    // Switch to next topic (which is unread)
+    setSelectedTopicId(nextId);
+  };
+
   const handleToggleComplete = async (topicId: string) => {
     const updated = await toggleLessonCompletion(topicId);
     setCompletedTopicIds(updated);
+    refreshProgress().catch(() => {});
   };
 
   // -------------------------------------------------------------
@@ -346,10 +397,13 @@ export function RoadmapsView({
         </View>
 
         <ScrollView
+          key={selectedTopicId}
           contentContainerStyle={[
             styles.scrollContent,
             { paddingBottom: Math.max(insets.bottom, 24) + 90 },
           ]}
+          onScroll={handleTopicScroll}
+          scrollEventThrottle={200}
           showsVerticalScrollIndicator={false}>
           {/* Chapter Breadcrumb & Tag */}
           {currentChapter && (
@@ -406,7 +460,7 @@ export function RoadmapsView({
 
             {nextTopic ? (
               <Pressable
-                onPress={() => setSelectedTopicId(nextTopic.id)}
+                onPress={() => handleNavigateNextTopic(nextTopic.id)}
                 style={[
                   styles.navPageBtn,
                   { backgroundColor: colors.card, borderColor: colors.border },
@@ -477,6 +531,7 @@ export function RoadmapsView({
         </View>
 
         <ScrollView
+          key={selectedLanguageId}
           contentContainerStyle={[
             styles.scrollContent,
             { paddingBottom: Math.max(insets.bottom, 24) + 80 },

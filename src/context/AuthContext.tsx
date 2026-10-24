@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { AppState, AppStateStatus } from 'react-native';
 import {
   UserProfile,
@@ -31,6 +31,7 @@ import {
   syncOnlineStreakWithApi,
   purchaseStreakFreezeApi,
   recoverStreakWithFreezeApi,
+  recordDailyStreakActivityApi,
 } from '@/services/api';
 import { signInWithGoogle, signInWithGithub } from '@/services/oauth';
 import { saveAuthToken, deleteAuthToken } from '@/services/secureStorage';
@@ -82,6 +83,11 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<UserProfile | null>(null);
+  const userRef = useRef<UserProfile | null>(null);
+  useEffect(() => {
+    userRef.current = user;
+  }, [user]);
+
   const [isOnboarded, setIsOnboarded] = useState<boolean>(false);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [transactions, setTransactions] = useState<CoinTransaction[]>([]);
@@ -97,7 +103,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   // Online Streak Check-In (WhatsApp-style automatic check-in when user comes online)
   const checkInOnlineStreak = useCallback(async (targetUser?: UserProfile | null) => {
-    const activeUser = targetUser !== undefined ? targetUser : user;
+    const activeUser = targetUser !== undefined ? targetUser : userRef.current;
     if (!activeUser?.id) return;
 
     try {
@@ -105,7 +111,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (res.success && res.data) {
         const d = res.data;
         const currentData = await getStreakData();
-        const updatedHistory = Array.from(new Set([d.lastActiveDate, ...(currentData.historyDates || [])]));
+        const historyBase = (currentData.historyDates || []).filter(Boolean);
+        const updatedHistory = d.todayCompleted && d.lastActiveDate
+          ? Array.from(new Set([d.lastActiveDate, ...historyBase]))
+          : historyBase;
 
         const syncedStreak: StreakData = {
           currentStreak: d.currentStreak,
@@ -149,9 +158,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setUser(updatedUser);
       await saveStoredProfile(updatedUser);
     }
-  }, [user]);
+  }, []);
 
-  // Load session & streak from storage on app mount
+  // Load session & streak from storage on app mount (runs ONCE on launch)
   useEffect(() => {
     async function initSession() {
       try {
@@ -184,12 +193,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // Sync streak whenever app comes to active foreground
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (nextState: AppStateStatus) => {
-      if (nextState === 'active' && user?.id) {
-        checkInOnlineStreak(user).catch(() => {});
+      if (nextState === 'active') {
+        const currentActive = userRef.current;
+        if (currentActive?.id) {
+          checkInOnlineStreak(currentActive).catch(() => {});
+        }
       }
     });
     return () => subscription.remove();
-  }, [user?.id]);
+  }, [checkInOnlineStreak]);
 
   const completeOnboarding = async () => {
     setIsOnboarded(true);
@@ -565,19 +577,36 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       await saveTransaction(tx);
       setTransactions((prev) => [tx, ...prev]);
 
-      // Sync transaction with backend — adopt server authoritative balance if returned
-      syncRewardTransactionWithApi({
-        userId: user.id,
-        type: tx.type,
-        amount: tx.amount,
-        description: tx.description,
-      }).then((apiRes) => {
-        if (apiRes.data?.verifiedBalance !== undefined) {
-          const syncedUser = { ...user, coins: apiRes.data.verifiedBalance };
-          setUser(syncedUser);
-          saveStoredProfile(syncedUser).catch(() => {});
-        }
-      }).catch(() => {});
+      // Sync streak activity & transaction with backend
+      if (user.id) {
+        recordDailyStreakActivityApi(user.id).then((streakRes) => {
+          if (streakRes.success && streakRes.data) {
+            const d = streakRes.data;
+            setStreak((prev) => ({
+              ...prev,
+              currentStreak: d.currentStreak,
+              longestStreak: d.longestStreak,
+              lastActiveDate: d.lastActiveDate,
+              todayCompleted: d.todayCompleted,
+              freezeCount: d.freezeCount,
+              lostStreak: d.lostStreak,
+            }));
+          }
+        }).catch(() => {});
+
+        syncRewardTransactionWithApi({
+          userId: user.id,
+          type: tx.type,
+          amount: tx.amount,
+          description: tx.description,
+        }).then((apiRes) => {
+          if (apiRes.data?.verifiedBalance !== undefined) {
+            const syncedUser = { ...user, coins: apiRes.data.verifiedBalance };
+            setUser(syncedUser);
+            saveStoredProfile(syncedUser).catch(() => {});
+          }
+        }).catch(() => {});
+      }
     }
 
     return {
