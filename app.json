@@ -113,7 +113,16 @@
       "expo-updates",
       "expo-notifications",
       "expo-image",
-      "expo-status-bar"
+      "expo-status-bar",
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "enableProguardInReleaseBuilds": true,
+            "enableShrinkResourcesInReleaseBuilds": true
+          }
+        }
+      ]
     ],
     "updates": {
       "url": "https://u.expo.dev/40cd73c4-3e56-4871-a7ff-1241eac367aa",
