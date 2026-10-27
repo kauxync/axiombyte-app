@@ -226,7 +226,7 @@ export function InteractiveCodeCard({
 
     setIsRunning(true);
     setIsError(false);
-    setTerminalOutput('⚡ Compiling & executing on Piston runner...');
+    setTerminalOutput('⚡ Compiling & executing code...');
 
     const result = await executeCodeWithPiston(cleanLanguage, code);
     setTerminalOutput(result.output);

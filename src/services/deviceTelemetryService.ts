@@ -9,6 +9,7 @@ import { getNotificationPermissionStatus } from './notificationService';
 
 const INSTALL_ID_STORAGE_KEY = 'axiombyte_device_install_uuid';
 let hasRegisteredThisSession = false;
+const APP_START_TIME = Date.now();
 
 /**
  * Retrieves existing persistent install UUID or creates a new one.
@@ -55,12 +56,35 @@ export async function collectDeviceTelemetry(userId?: string) {
     // Ignore storage lookup error
   }
 
-  // Accessibility screen reader
+  // Accessibility screen reader & reduce motion
   let screenReaderActive = false;
+  let isReduceMotion = false;
   try {
     screenReaderActive = await AccessibilityInfo.isScreenReaderEnabled();
+    isReduceMotion = await AccessibilityInfo.isReduceMotionEnabled();
   } catch {
     // Ignore
+  }
+
+  // App launch latency
+  const appLaunchLatencyMs = Math.max(0, Date.now() - APP_START_TIME);
+
+  // Battery metrics (safely checked if browser Battery API or Expo Battery is available)
+  let batteryLevel: number | null = null;
+  let isBatteryCharging: boolean | null = null;
+  let isLowPowerMode: boolean | null = null;
+  let carrierName: string | null = null;
+
+  if (Platform.OS === 'web' && typeof navigator !== 'undefined' && 'getBattery' in navigator) {
+    try {
+      const batt = await (navigator as any).getBattery();
+      if (batt) {
+        batteryLevel = typeof batt.level === 'number' ? Math.round(batt.level * 100) / 100 : null;
+        isBatteryCharging = typeof batt.charging === 'boolean' ? batt.charging : null;
+      }
+    } catch {
+      // Ignore
+    }
   }
 
   // Notification status
@@ -86,6 +110,12 @@ export async function collectDeviceTelemetry(userId?: string) {
     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Kolkata',
     freeDiskSpaceGb,
     screenReaderActive,
+    isReduceMotion,
+    carrierName,
+    batteryLevel,
+    isBatteryCharging,
+    isLowPowerMode,
+    appLaunchLatencyMs,
     notificationStatus: notifGranted ? 'GRANTED' : 'UNDETERMINED',
     isRooted: false,
     biometricType: 'NONE',
@@ -94,15 +124,23 @@ export async function collectDeviceTelemetry(userId?: string) {
 
 /**
  * Registers device telemetry with the remote Hostinger backend.
- * Runs non-blocking in the background once per app session.
+ * Supports events: 'login' | 'logout' | 'launch'
+ * sessions_count on the server increases ONLY when a user logs in on that same device after logout.
  */
-export async function registerDeviceTelemetry(userId?: string): Promise<boolean> {
-  if (hasRegisteredThisSession && !userId) {
+export async function registerDeviceTelemetry(
+  userId?: string,
+  event: 'login' | 'logout' | 'launch' = 'launch'
+): Promise<boolean> {
+  if (hasRegisteredThisSession && !userId && event === 'launch') {
     return true;
   }
 
   try {
     const telemetry = await collectDeviceTelemetry(userId);
+    const payload = {
+      ...telemetry,
+      event,
+    };
 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 10000);
@@ -113,13 +151,15 @@ export async function registerDeviceTelemetry(userId?: string): Promise<boolean>
         'Content-Type': 'application/json',
         Accept: 'application/json',
       },
-      body: JSON.stringify(telemetry),
+      body: JSON.stringify(payload),
       signal: controller.signal,
     });
     clearTimeout(timeout);
 
     if (res.ok) {
-      hasRegisteredThisSession = true;
+      if (event === 'launch') {
+        hasRegisteredThisSession = true;
+      }
       return true;
     }
     return false;

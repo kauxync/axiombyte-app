@@ -12,6 +12,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Fonts } from '@/constants/theme';
 import { useAppTheme } from '@/context/ThemeContext';
 import { useAuth } from '@/context/AuthContext';
+import { ActivityCalendar } from './ActivityCalendar';
 
 interface StreakModalProps {
   visible: boolean;
@@ -26,20 +27,14 @@ const MILESTONES = [
   { days: 30, bonus: 350, title: 'Epistemic Titan', desc: '1 month of mathematical discipline' },
 ];
 
-const WEEK_DAYS = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
-const WEEK_DAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-
 export function StreakModal({ visible, onClose, onPracticePress }: StreakModalProps) {
   const { colors, isDark } = useAppTheme();
-  const { user, streak, recordStreakActivity, buyStreakFreeze, recoverLostStreak } = useAuth();
+  const { user, streak, recordStreakActivity, buyStreakFreeze, restoreStreak } = useAuth();
 
   const [buyingFreeze, setBuyingFreeze] = useState(false);
   const [recovering, setRecovering] = useState(false);
   const [claiming, setClaiming] = useState(false);
   const [notice, setNotice] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
-
-  // Today's index in the week (0 = Mon, 6 = Sun)
-  const todayWeekIndex = (new Date().getDay() + 6) % 7;
 
   const handleClaimToday = async () => {
     setClaiming(true);
@@ -72,7 +67,7 @@ export function StreakModal({ visible, onClose, onPracticePress }: StreakModalPr
       if (res.success) {
         setNotice({
           type: 'success',
-          message: '🛡️ Streak Freeze added! Your streak is protected if you miss a day.',
+          message: '🛡️ Streak Freeze acquired! Your streak is protected if you miss a day.',
         });
       } else {
         setNotice({
@@ -87,30 +82,24 @@ export function StreakModal({ visible, onClose, onPracticePress }: StreakModalPr
     }
   };
 
-  const handleRecoverStreak = async () => {
+  const handleRestoreStreak = async () => {
     setRecovering(true);
     setNotice(null);
     try {
-      let res;
-      if (streak.freezeCount > 0) {
-        res = await recoverLostStreak();
-      } else {
-        res = await buyStreakFreeze(true);
-      }
-
+      const res = await restoreStreak();
       if (res.success) {
         setNotice({
           type: 'success',
-          message: `🛡️ Streak Freeze applied! Your ${res.restoredStreak || streak.lostStreak}-day streak is fully restored!`,
+          message: `✨ Streak Restored! Your ${res.restoredStreak || streak.lostStreak}-day streak is fully restored!`,
         });
       } else {
         setNotice({
           type: 'error',
-          message: res.error || 'Could not recover streak.',
+          message: res.error || 'Could not restore streak.',
         });
       }
     } catch {
-      setNotice({ type: 'error', message: 'Failed to recover streak.' });
+      setNotice({ type: 'error', message: 'Failed to restore streak.' });
     } finally {
       setRecovering(false);
     }
@@ -199,67 +188,7 @@ export function StreakModal({ visible, onClose, onPracticePress }: StreakModalPr
               </View>
             </View>
 
-            {/* Weekly Calendar Tracker */}
-            <View style={[styles.sectionBox, { backgroundColor: colors.cardSecondary }]}>
-              <View style={styles.sectionHeader}>
-                <Text style={[styles.sectionLabel, { color: colors.textMuted }]}>THIS WEEK</Text>
-                <Text style={[styles.sectionValue, { color: colors.primary }]}>
-                  {(streak.weeklyActivity || []).filter(Boolean).length}/7 Days Active
-                </Text>
-              </View>
-
-              <View style={styles.weekGrid}>
-                {WEEK_DAYS.map((letter, idx) => {
-                  const isActive = !!(streak.weeklyActivity || [])[idx];
-                  const isToday = idx === todayWeekIndex;
-
-                  return (
-                    <View key={idx} style={styles.dayCol}>
-                      <Text
-                        style={[
-                          styles.dayLetter,
-                          {
-                            color: isToday ? colors.primary : colors.textMuted,
-                            fontWeight: isToday ? '800' : '500',
-                          },
-                        ]}>
-                        {letter}
-                      </Text>
-
-                      <View
-                        style={[
-                          styles.dayCircle,
-                          {
-                            backgroundColor: isActive
-                              ? 'rgba(255, 90, 60, 0.2)'
-                              : isDark
-                              ? '#0F172A'
-                              : '#E2E8F0',
-                            borderColor: isActive
-                              ? '#FF5A3C'
-                              : isToday
-                              ? colors.primary
-                              : colors.border,
-                            borderWidth: isActive || isToday ? 1.5 : 1,
-                          },
-                        ]}>
-                        {isActive ? (
-                          <Ionicons name="flame" size={16} color="#FF5A3C" />
-                        ) : isToday ? (
-                          <View style={[styles.todayDot, { backgroundColor: colors.primary }]} />
-                        ) : (
-                          <Text style={[styles.dayNameSub, { color: colors.textMuted }]}>
-                            {WEEK_DAY_NAMES[idx][0]}
-                          </Text>
-                        )}
-                      </View>
-                    </View>
-                  );
-                })}
-              </View>
-            </View>
-
-            {/* Lost Streak Recovery Banner */}
+            {/* Lost Streak Restore Banner */}
             {!!streak.lostStreak && streak.lostStreak > 0 && (
               <View
                 style={[
@@ -276,30 +205,28 @@ export function StreakModal({ visible, onClose, onPracticePress }: StreakModalPr
                       {streak.lostStreak}-Day Streak Lost!
                     </Text>
                     <Text style={[styles.recoveryDesc, { color: colors.textMuted }]}>
-                      You missed a day, but your streak is protected if you cover it with a Streak Freeze shield.
+                      Your previous streak was lost. Use Streak Restore to recover your full {streak.lostStreak}-day streak and metadata.
                     </Text>
                   </View>
                 </View>
 
                 <Pressable
-                  onPress={handleRecoverStreak}
-                  disabled={recovering || (streak.freezeCount === 0 && (user?.coins || 0) < 50)}
+                  onPress={handleRestoreStreak}
+                  disabled={recovering || (user?.coins || 0) < 50}
                   style={[
                     styles.recoveryActionBtn,
                     {
                       backgroundColor: '#208AEF',
-                      opacity: (streak.freezeCount > 0 || (user?.coins || 0) >= 50) ? 1 : 0.6,
+                      opacity: (user?.coins || 0) >= 50 ? 1 : 0.6,
                     },
                   ]}>
                   {recovering ? (
                     <ActivityIndicator size="small" color="#FFF" />
                   ) : (
                     <>
-                      <Ionicons name="shield-checkmark" size={16} color="#FFF" />
+                      <Ionicons name="sparkles" size={16} color="#FFF" />
                       <Text style={styles.recoveryActionText}>
-                        {streak.freezeCount > 0
-                          ? 'Use Shield to Restore Streak'
-                          : 'Buy Freeze & Restore Streak (50 🪙)'}
+                        Restore Streak (50 🪙)
                       </Text>
                     </>
                   )}
@@ -325,48 +252,109 @@ export function StreakModal({ visible, onClose, onPracticePress }: StreakModalPr
             )}
 
             {/* Streak Freeze Shield Card */}
-            <View
-              style={[
-                styles.freezeCard,
-                {
-                  backgroundColor: colors.cardSecondary,
-                  borderColor: isDark ? 'rgba(56, 189, 248, 0.25)' : 'rgba(2, 132, 199, 0.2)',
-                },
-              ]}>
-              <View style={styles.freezeLeft}>
-                <View style={[styles.shieldIconBox, { backgroundColor: 'rgba(56, 189, 248, 0.15)' }]}>
-                  <Ionicons name="shield-checkmark" size={22} color="#38BDF8" />
-                </View>
-                <View style={styles.freezeInfo}>
-                  <Text style={[styles.freezeTitle, { color: colors.text }]}>Streak Freeze</Text>
-                  <Text style={[styles.freezeDesc, { color: colors.textMuted }]}>
-                    {streak.freezeCount > 0
-                      ? `${streak.freezeCount} shield active • Protects if you miss 1 day`
-                      : 'No freeze active • Streak will reset if a day is missed'}
-                  </Text>
-                </View>
-              </View>
+            {(() => {
+              const freezeStatus = streak.freezeStatus || (streak.freezeCount > 0 ? 'available' : 'none');
+              const hasActiveFreeze = freezeStatus === 'available' || streak.freezeCount > 0;
 
-              <Pressable
-                onPress={handleBuyFreeze}
-                disabled={buyingFreeze || (user?.coins || 0) < 50}
-                style={[
-                  styles.buyFreezeBtn,
-                  {
-                    backgroundColor: (user?.coins || 0) >= 50 ? colors.primary : colors.card,
-                    opacity: (user?.coins || 0) >= 50 ? 1 : 0.6,
-                  },
-                ]}>
-                {buyingFreeze ? (
-                  <ActivityIndicator size="small" color="#FFF" />
-                ) : (
-                  <>
-                    <Ionicons name="add" size={14} color="#FFF" />
-                    <Text style={styles.buyFreezeText}>50 🪙</Text>
-                  </>
-                )}
-              </Pressable>
-            </View>
+              return (
+                <View
+                  style={[
+                    styles.freezeCard,
+                    {
+                      backgroundColor: colors.cardSecondary,
+                      borderColor: isDark ? 'rgba(56, 189, 248, 0.25)' : 'rgba(2, 132, 199, 0.2)',
+                    },
+                  ]}>
+                  <View style={styles.freezeLeft}>
+                    <View style={[styles.shieldIconBox, { backgroundColor: 'rgba(56, 189, 248, 0.15)' }]}>
+                      <Ionicons name="shield-checkmark" size={22} color="#38BDF8" />
+                    </View>
+                    <View style={styles.freezeInfo}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                        <Text style={[styles.freezeTitle, { color: colors.text }]}>Streak Freeze</Text>
+                        <View
+                          style={{
+                            paddingHorizontal: 7,
+                            paddingVertical: 2,
+                            borderRadius: 6,
+                            backgroundColor:
+                              freezeStatus === 'available'
+                                ? 'rgba(16, 185, 129, 0.15)'
+                                : freezeStatus === 'used'
+                                ? 'rgba(245, 158, 11, 0.15)'
+                                : 'rgba(148, 163, 184, 0.15)',
+                          }}>
+                          <Text
+                            style={{
+                              fontSize: 10,
+                              fontWeight: '700',
+                              color:
+                                freezeStatus === 'available'
+                                  ? '#10B981'
+                                  : freezeStatus === 'used'
+                                  ? '#F59E0B'
+                                  : colors.textMuted,
+                              textTransform: 'uppercase',
+                            }}>
+                            {freezeStatus === 'available'
+                              ? 'Available'
+                              : freezeStatus === 'used'
+                              ? 'Used'
+                              : 'None'}
+                          </Text>
+                        </View>
+                      </View>
+                      <Text style={[styles.freezeDesc, { color: colors.textMuted }]}>
+                        {hasActiveFreeze
+                          ? '1 shield stored in account • Protects your next missed day (Max 1)'
+                          : freezeStatus === 'used'
+                          ? 'Previous shield was consumed • Ready to purchase a new shield'
+                          : 'No freeze active • Protect against future missed days'}
+                      </Text>
+                    </View>
+                  </View>
+
+                  <Pressable
+                    onPress={handleBuyFreeze}
+                    disabled={hasActiveFreeze || buyingFreeze || (user?.coins || 0) < 50}
+                    style={[
+                      styles.buyFreezeBtn,
+                      {
+                        backgroundColor: hasActiveFreeze
+                          ? 'rgba(16, 185, 129, 0.2)'
+                          : (user?.coins || 0) >= 50
+                          ? colors.primary
+                          : colors.card,
+                        opacity: hasActiveFreeze ? 0.9 : (user?.coins || 0) >= 50 ? 1 : 0.6,
+                        borderWidth: hasActiveFreeze ? 1 : 0,
+                        borderColor: hasActiveFreeze ? '#10B981' : 'transparent',
+                      },
+                    ]}>
+                    {buyingFreeze ? (
+                      <ActivityIndicator size="small" color="#FFF" />
+                    ) : hasActiveFreeze ? (
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                        <Ionicons name="checkmark" size={13} color="#10B981" />
+                        <Text style={[styles.buyFreezeText, { color: '#10B981', fontSize: 11 }]}>Active (Max 1)</Text>
+                      </View>
+                    ) : (
+                      <>
+                        <Ionicons name="add" size={14} color="#FFF" />
+                        <Text style={styles.buyFreezeText}>50 🪙</Text>
+                      </>
+                    )}
+                  </Pressable>
+                </View>
+              );
+            })()}
+
+            {/* GitHub & LeetCode Style Activity Calendar (Tracks streaks, freezes & restores) */}
+            <ActivityCalendar
+              userId={user?.id}
+              year={2026}
+              startDate="2026-10-20"
+              refreshTrigger={`${streak.lastActiveDate}_${streak.currentStreak}_${streak.todayCompleted}_${streak.freezeStatus}_${streak.lostStreak}`}
+            />
 
             {/* Milestones Ladder */}
             <View style={[styles.milestonesSection, { backgroundColor: colors.cardSecondary }]}>
@@ -427,8 +415,8 @@ export function StreakModal({ visible, onClose, onPracticePress }: StreakModalPr
               })}
             </View>
 
-            {/* Quick Action Button */}
-            {!streak.todayCompleted ? (
+            {/* Quick Action Button - only shown when today's study goal is pending */}
+            {!streak.todayCompleted && (
               <Pressable
                 onPress={handleClaimToday}
                 disabled={claiming}
@@ -441,16 +429,6 @@ export function StreakModal({ visible, onClose, onPracticePress }: StreakModalPr
                     <Text style={styles.actionBtnText}>Log Today&apos;s Practice (+10 Coins)</Text>
                   </>
                 )}
-              </Pressable>
-            ) : (
-              <Pressable
-                onPress={() => {
-                  onClose();
-                  if (onPracticePress) onPracticePress();
-                }}
-                style={[styles.actionBtn, { backgroundColor: colors.primary }]}>
-                <Ionicons name="hardware-chip-outline" size={18} color="#FFF" />
-                <Text style={styles.actionBtnText}>Continue Practicing in C Stepper</Text>
               </Pressable>
             )}
           </ScrollView>
@@ -576,53 +554,10 @@ const styles = StyleSheet.create({
     fontFamily: Fonts.body,
     fontSize: 12.5,
   },
-  sectionBox: {
-    borderRadius: 16,
-    padding: 16,
-    marginVertical: 12,
-  },
-  sectionHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 12,
-  },
   sectionLabel: {
     fontFamily: Fonts.bodyBold,
     fontSize: 11.5,
     letterSpacing: 1,
-  },
-  sectionValue: {
-    fontFamily: Fonts.bodyBold,
-    fontSize: 12,
-  },
-  weekGrid: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
-  dayCol: {
-    alignItems: 'center',
-    gap: 6,
-  },
-  dayLetter: {
-    fontFamily: Fonts.bodyBold,
-    fontSize: 12,
-  },
-  dayCircle: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  todayDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-  },
-  dayNameSub: {
-    fontFamily: Fonts.body,
-    fontSize: 11,
   },
   freezeCard: {
     flexDirection: 'row',

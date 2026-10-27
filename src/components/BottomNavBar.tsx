@@ -5,7 +5,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAppTheme } from '@/context/ThemeContext';
 import { Fonts } from '@/constants/theme';
 
-export type AppTab = 'home' | 'roadmaps' | 'math' | 'profile';
+export type AppTab = 'home' | 'roadmaps' | 'math' | 'leaderboard' | 'profile';
 
 interface NavItem {
   key: AppTab;
@@ -29,9 +29,15 @@ const NAV_ITEMS: NavItem[] = [
   },
   {
     key: 'math',
-    label: 'Subjects Notes',
+    label: 'Notes',
     iconOutline: 'book-outline',
     iconFilled: 'book',
+  },
+  {
+    key: 'leaderboard',
+    label: 'Ranks',
+    iconOutline: 'trophy-outline',
+    iconFilled: 'trophy',
   },
   {
     key: 'profile',

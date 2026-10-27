@@ -27,10 +27,9 @@ import {
   loginWithApi,
   updateProfileWithApi,
   deleteAccountWithApi,
-  syncRewardTransactionWithApi,
   syncOnlineStreakWithApi,
   purchaseStreakFreezeApi,
-  recoverStreakWithFreezeApi,
+  purchaseStreakRestoreApi,
   recordDailyStreakActivityApi,
 } from '@/services/api';
 import { signInWithGoogle, signInWithGithub } from '@/services/oauth';
@@ -52,7 +51,8 @@ interface AuthContextType {
     newStreak: number;
     milestoneBonus?: { days: number; bonus: number };
   }>;
-  buyStreakFreeze: (recoverLost?: boolean) => Promise<{ success: boolean; error?: string; restoredStreak?: number }>;
+  buyStreakFreeze: () => Promise<{ success: boolean; error?: string }>;
+  restoreStreak: () => Promise<{ success: boolean; error?: string; restoredStreak?: number }>;
   recoverLostStreak: () => Promise<{ success: boolean; error?: string; restoredStreak?: number }>;
   checkInOnlineStreak: (targetUser?: UserProfile | null) => Promise<void>;
   sendEmailVerification: (email: string) => Promise<{ success: boolean; message: string; debugCode?: string }>;
@@ -96,13 +96,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     currentStreak: 1,
     longestStreak: 1,
     lastActiveDate: getLocalDateString(),
-    todayCompleted: true,
-    freezeCount: 1,
+    todayCompleted: false,
+    freezeCount: 0,
+    freezeStatus: 'none',
     historyDates: [getLocalDateString()],
     weeklyActivity: computeCurrentWeekActivity([getLocalDateString()]),
   });
 
-  // Online Streak Check-In (WhatsApp-style automatic check-in when user comes online)
+  // Online Streak Check-In: Authoritative synchronization with remote server
   const checkInOnlineStreak = useCallback(async (targetUser?: UserProfile | null) => {
     const activeUser = targetUser !== undefined ? targetUser : userRef.current;
     if (!activeUser?.id) return;
@@ -124,6 +125,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           lastActiveDate: d.lastActiveDate,
           todayCompleted: d.todayCompleted,
           freezeCount: d.freezeCount,
+          freezeStatus: d.freezeStatus || (d.freezeCount > 0 ? 'available' : 'none'),
+          freezePurchasedDate: d.freezePurchasedDate,
+          freezeUsedDate: d.freezeUsedDate,
           lostStreak: d.lostStreak,
           freezeUsedToday: d.freezeUsedToday,
           streakLostToday: d.streakLostToday,
@@ -134,9 +138,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setStreak(syncedStreak);
         await saveStreakData(syncedStreak);
 
-        // Update coins if awarded or altered
-        if (d.coins !== undefined && d.coins !== activeUser.coins) {
-          const syncedUser = { ...activeUser, coins: d.coins };
+        // Update coins / XP if altered
+        if (
+          (d.coins !== undefined && d.coins !== activeUser.coins) ||
+          (d.xp !== undefined && d.xp !== activeUser.xp)
+        ) {
+          const syncedUser = {
+            ...activeUser,
+            coins: d.coins !== undefined ? d.coins : activeUser.coins,
+            xp: d.xp !== undefined ? d.xp : activeUser.xp,
+          };
           setUser(syncedUser);
           await saveStoredProfile(syncedUser);
         }
@@ -148,18 +159,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return;
       }
     } catch (e) {
-      if (__DEV__) console.warn('[Streak] Remote sync failed, using offline streak logic:', e);
+      if (__DEV__) console.warn('[Streak] Remote sync failed, keeping verified local streak data:', e);
     }
 
-    // Local fallback check-in if server is offline
-    const local = await recordDailyStreakActivity();
-    setStreak(local.updatedStreak);
-    if (local.coinsAwarded > 0 && activeUser) {
-      const updatedCoins = activeUser.coins + local.coinsAwarded;
-      const updatedUser = { ...activeUser, coins: updatedCoins };
-      setUser(updatedUser);
-      await saveStoredProfile(updatedUser);
-    }
+    // Server unreachable: Read stored verified state without faking study completion
+    const local = await getStreakData();
+    setStreak(local);
   }, []);
 
   // Load session & streak from storage on app mount (runs ONCE on launch)
@@ -384,6 +389,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       };
       setUser(userProfile);
       await saveStoredProfile(userProfile);
+      registerDeviceTelemetry(userProfile.id, 'login').catch(() => {});
       checkInOnlineStreak(userProfile).catch(() => {});
       // Persist auth token returned by server for future authenticated API calls
       if (apiRes.data?.token) {
@@ -416,6 +422,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const setAuthenticatedUser = async (profile: UserProfile) => {
     setUser(profile);
     await saveStoredProfile(profile);
+    registerDeviceTelemetry(profile.id, 'login').catch(() => {});
     checkInOnlineStreak(profile).catch(() => {});
   };
 
@@ -553,9 +560,70 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   /**
-   * Records daily study/practice activity, increments streak, and awards coins
+   * Records daily study/practice activity, increments streak, and awards coins & XP
    */
   const recordStreakActivity = async () => {
+    // 1. If user is authenticated, query authoritative server streak engine
+    if (user?.id) {
+      try {
+        const res = await recordDailyStreakActivityApi(user.id);
+        if (res.success && res.data) {
+          const d = res.data;
+          const currentData = await getStreakData();
+          const historyBase = (currentData.historyDates || []).filter(Boolean);
+          const updatedHistory = d.lastActiveDate
+            ? Array.from(new Set([d.lastActiveDate, ...historyBase]))
+            : historyBase;
+
+          const syncedStreak: StreakData = {
+            currentStreak: d.currentStreak,
+            longestStreak: d.longestStreak,
+            lastActiveDate: d.lastActiveDate,
+            todayCompleted: d.todayCompleted,
+            freezeCount: d.freezeCount,
+            freezeStatus: d.freezeStatus,
+            lostStreak: d.lostStreak,
+            freezeUsedToday: d.freezeUsedToday,
+            streakLostToday: d.streakLostToday,
+            historyDates: updatedHistory,
+            weeklyActivity: computeCurrentWeekActivity(updatedHistory),
+          };
+
+          setStreak(syncedStreak);
+          await saveStreakData(syncedStreak);
+
+          const updatedCoins = d.coins !== undefined ? d.coins : user.coins;
+          const updatedXp = d.xp !== undefined ? d.xp : user.xp;
+          const updatedUser = { ...user, coins: updatedCoins, xp: updatedXp };
+          setUser(updatedUser);
+          await saveStoredProfile(updatedUser);
+
+          if (d.coinsAwarded && d.coinsAwarded > 0) {
+            const tx: CoinTransaction = {
+              id: 'tx_streak_' + Date.now(),
+              type: 'streak_reward',
+              amount: d.coinsAwarded,
+              inrValue: d.coinsAwarded / 100,
+              description: `🔥 Day ${d.currentStreak} Daily Streak Bonus (+${d.coinsAwarded} Coins)`,
+              timestamp: 'Just now',
+              status: 'completed',
+            };
+            await saveTransaction(tx);
+            setTransactions((prev) => [tx, ...prev]);
+          }
+
+          return {
+            success: true,
+            coinsAwarded: d.coinsAwarded || 0,
+            newStreak: d.currentStreak,
+          };
+        }
+      } catch (err) {
+        if (__DEV__) console.warn('[Streak] Remote streak record failed, using offline fallback:', err);
+      }
+    }
+
+    // Offline / unauthenticated fallback
     const result = await recordDailyStreakActivity();
     setStreak(result.updatedStreak);
 
@@ -579,37 +647,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       await saveTransaction(tx);
       setTransactions((prev) => [tx, ...prev]);
-
-      // Sync streak activity & transaction with backend
-      if (user.id) {
-        recordDailyStreakActivityApi(user.id).then((streakRes) => {
-          if (streakRes.success && streakRes.data) {
-            const d = streakRes.data;
-            setStreak((prev) => ({
-              ...prev,
-              currentStreak: d.currentStreak,
-              longestStreak: d.longestStreak,
-              lastActiveDate: d.lastActiveDate,
-              todayCompleted: d.todayCompleted,
-              freezeCount: d.freezeCount,
-              lostStreak: d.lostStreak,
-            }));
-          }
-        }).catch(() => {});
-
-        syncRewardTransactionWithApi({
-          userId: user.id,
-          type: tx.type,
-          amount: tx.amount,
-          description: tx.description,
-        }).then((apiRes) => {
-          if (apiRes.data?.verifiedBalance !== undefined) {
-            const syncedUser = { ...user, coins: apiRes.data.verifiedBalance };
-            setUser(syncedUser);
-            saveStoredProfile(syncedUser).catch(() => {});
-          }
-        }).catch(() => {});
-      }
     }
 
     return {
@@ -620,16 +657,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     };
   };
 
-
-
   /**
-   * Buys a Streak Freeze shield using 50 coins (optionally recovering a lost streak)
+   * Buys a Streak Freeze shield using 50 coins
+   * Enforces server limit: only 1 unused freeze allowed at a time.
    */
-  const buyStreakFreeze = async (recoverLost = false) => {
+  const buyStreakFreeze = async () => {
     if (!user?.id) return { success: false, error: 'User not logged in' };
 
     try {
-      const res = await purchaseStreakFreezeApi(user.id, recoverLost);
+      const res = await purchaseStreakFreezeApi(user.id);
       if (res.success && res.data) {
         const d = res.data;
         const currentData = await getStreakData();
@@ -641,6 +677,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           lastActiveDate: d.lastActiveDate,
           todayCompleted: d.todayCompleted,
           freezeCount: d.freezeCount,
+          freezeStatus: 'available',
+          freezePurchasedDate: d.freezePurchasedDate,
           lostStreak: d.lostStreak,
           historyDates: updatedHistory,
           weeklyActivity: computeCurrentWeekActivity(updatedHistory),
@@ -656,14 +694,77 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const freshTx = await getTransactions();
         setTransactions(freshTx);
 
-        return { success: true, restoredStreak: d.currentStreak };
+        return { success: true };
+      } else {
+        return { success: false, error: res.message || 'Could not purchase freeze.' };
       }
-    } catch (e) {
+    } catch (e: any) {
       if (__DEV__) console.warn('[Streak] Remote purchase failed, trying local:', e);
     }
 
     // Fallback to local storage if API is unreachable
-    const localRes = await buyStreakFreezeFromStorage(50, recoverLost);
+    const localRes = await buyStreakFreezeFromStorage(50);
+    if (localRes.success) {
+      const freshStreak = await getStreakData();
+      setStreak(freshStreak);
+      if (user) {
+        const updatedCoins = Math.max(0, user.coins - 50);
+        const updatedUser = { ...user, coins: updatedCoins };
+        setUser(updatedUser);
+        await saveStoredProfile(updatedUser);
+      }
+      const freshTx = await getTransactions();
+      setTransactions(freshTx);
+      return { success: true };
+    }
+    return { success: false, error: localRes.error };
+  };
+
+  /**
+   * Restores a previously lost streak using Streak Restore (50 coins)
+   * Separate from freeze: recovers an eligible lost streak.
+   */
+  const restoreStreak = async () => {
+    if (!user?.id) return { success: false, error: 'User not logged in' };
+
+    try {
+      const res = await purchaseStreakRestoreApi(user.id);
+      if (res.success && res.data) {
+        const d = res.data;
+        const currentData = await getStreakData();
+        const updatedHistory = Array.from(new Set([d.lastActiveDate, ...(currentData.historyDates || [])]));
+
+        const syncedStreak: StreakData = {
+          currentStreak: d.currentStreak,
+          longestStreak: d.longestStreak,
+          lastActiveDate: d.lastActiveDate,
+          todayCompleted: d.todayCompleted,
+          freezeCount: d.freezeCount,
+          freezeStatus: d.freezeStatus,
+          lostStreak: 0,
+          historyDates: updatedHistory,
+          weeklyActivity: computeCurrentWeekActivity(updatedHistory),
+        };
+
+        setStreak(syncedStreak);
+        await saveStreakData(syncedStreak);
+
+        const updatedUser = { ...user, coins: d.coins };
+        setUser(updatedUser);
+        await saveStoredProfile(updatedUser);
+
+        const freshTx = await getTransactions();
+        setTransactions(freshTx);
+
+        return { success: true, restoredStreak: d.restoredStreak || d.currentStreak };
+      } else {
+        return { success: false, error: res.message || 'Could not restore streak.' };
+      }
+    } catch (e: any) {
+      if (__DEV__) console.warn('[Streak] Remote restore failed, trying local:', e);
+    }
+
+    const localRes = await recoverLostStreakFromStorage();
     if (localRes.success) {
       const freshStreak = await getStreakData();
       setStreak(freshStreak);
@@ -681,46 +782,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   /**
-   * Recovers a broken streak using an available Streak Freeze shield
+   * Alias for recoverLostStreak for backward compatibility
    */
   const recoverLostStreak = async () => {
-    if (!user?.id) return { success: false, error: 'User not logged in' };
-
-    try {
-      const res = await recoverStreakWithFreezeApi(user.id);
-      if (res.success && res.data) {
-        const d = res.data;
-        const currentData = await getStreakData();
-        const updatedHistory = Array.from(new Set([d.lastActiveDate, ...(currentData.historyDates || [])]));
-
-        const syncedStreak: StreakData = {
-          currentStreak: d.currentStreak,
-          longestStreak: d.longestStreak,
-          lastActiveDate: d.lastActiveDate,
-          todayCompleted: d.todayCompleted,
-          freezeCount: d.freezeCount,
-          lostStreak: 0,
-          historyDates: updatedHistory,
-          weeklyActivity: computeCurrentWeekActivity(updatedHistory),
-        };
-
-        setStreak(syncedStreak);
-        await saveStreakData(syncedStreak);
-
-        return { success: true, restoredStreak: d.currentStreak };
-      }
-    } catch {}
-
-    const localRes = await recoverLostStreakFromStorage();
-    if (localRes.success) {
-      const freshStreak = await getStreakData();
-      setStreak(freshStreak);
-      return { success: true, restoredStreak: localRes.restoredStreak };
-    }
-    return { success: false, error: localRes.error };
+    return restoreStreak();
   };
 
   const logout = async () => {
+    registerDeviceTelemetry(undefined, 'logout').catch(() => {});
     await clearAllSessionData(); // clears SecureStore + AsyncStorage session keys
     await deleteAuthToken();     // belt-and-suspenders: explicitly remove token
     setUser(null);
@@ -773,6 +842,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         streak,
         recordStreakActivity,
         buyStreakFreeze,
+        restoreStreak,
         recoverLostStreak,
         checkInOnlineStreak,
         completeOnboarding,

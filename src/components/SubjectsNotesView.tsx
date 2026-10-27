@@ -11,11 +11,13 @@ import {
   TextInput,
   NativeSyntheticEvent,
   NativeScrollEvent,
+  Animated,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Fonts } from '@/constants/theme';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAppTheme } from '@/context/ThemeContext';
+import { useAuth } from '@/context/AuthContext';
 import { useCurriculum } from '@/context/CurriculumContext';
 import {
   loadCompletedLessonIds,
@@ -45,6 +47,74 @@ export function isIconUrl(icon?: string): boolean {
   );
 }
 
+function AnimatedCard({
+  children,
+  onPress,
+  style,
+  index = 0,
+}: {
+  children: React.ReactNode;
+  onPress?: () => void;
+  style?: any;
+  index?: number;
+}) {
+  const [scaleAnim] = useState(() => new Animated.Value(1));
+  const [fadeAnim] = useState(() => new Animated.Value(0));
+  const [translateYAnim] = useState(() => new Animated.Value(16));
+
+  useEffect(() => {
+    Animated.parallel([
+      Animated.timing(fadeAnim, {
+        toValue: 1,
+        duration: 260,
+        delay: Math.min(index * 35, 240),
+        useNativeDriver: true,
+      }),
+      Animated.spring(translateYAnim, {
+        toValue: 0,
+        friction: 8,
+        tension: 45,
+        delay: Math.min(index * 35, 240),
+        useNativeDriver: true,
+      }),
+    ]).start();
+  }, [fadeAnim, translateYAnim, index]);
+
+  const handlePressIn = () => {
+    Animated.spring(scaleAnim, {
+      toValue: 0.98,
+      friction: 8,
+      useNativeDriver: true,
+    }).start();
+  };
+
+  const handlePressOut = () => {
+    Animated.spring(scaleAnim, {
+      toValue: 1,
+      friction: 6,
+      useNativeDriver: true,
+    }).start();
+  };
+
+  return (
+    <Animated.View
+      style={[
+        {
+          opacity: fadeAnim,
+          transform: [{ translateY: translateYAnim }, { scale: scaleAnim }],
+        },
+      ]}>
+      <Pressable
+        onPress={onPress}
+        onPressIn={handlePressIn}
+        onPressOut={handlePressOut}
+        style={style}>
+        {children}
+      </Pressable>
+    </Animated.View>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // MAIN COMPONENT
 // ---------------------------------------------------------------------------
@@ -62,9 +132,10 @@ export function SubjectsNotesView({
   const insets = useSafeAreaInsets();
   const { colors, isDark } = useAppTheme();
   const { subjects, isOffline, refreshProgress } = useCurriculum();
+  const { recordStreakActivity } = useAuth();
   const activeSubjects = useMemo(() => subjects || [], [subjects]);
 
-  // Navigation states mirroring RoadmapsView pattern:
+  // Navigation states:
   // View 1 (Subjects List) -> View 2 (Subject Chapters) -> View 3 (Topic Study Detail)
   const [selectedSubjectId, setSelectedSubjectId] = useState<string | null>(
     initialSubjectId || null
@@ -85,45 +156,55 @@ export function SubjectsNotesView({
     });
   }, []);
 
-  // Search & Filter States
-  const [searchQuery, setSearchQuery] = useState('');
-  type SubjectFilter = 'all' | 'in_progress' | 'completed' | 'not_started';
-  const [selectedFilter, setSelectedFilter] = useState<SubjectFilter>('all');
+  // Adjust state during render if initial navigation props change (React 19 pattern)
+  const [prevInitialSubjectId, setPrevInitialSubjectId] = useState(initialSubjectId);
+  if (initialSubjectId !== prevInitialSubjectId) {
+    setPrevInitialSubjectId(initialSubjectId);
+    if (initialSubjectId) {
+      setSelectedSubjectId(initialSubjectId);
+    }
+  }
 
-  // Multi-tier Android hardware Back button handling
+  const [prevInitialTopicId, setPrevInitialTopicId] = useState(initialTopicId);
+  if (initialTopicId !== prevInitialTopicId) {
+    setPrevInitialTopicId(initialTopicId);
+    if (initialTopicId) {
+      setSelectedTopicId(initialTopicId);
+    }
+  }
+
+  // Hardware Back button handling
   useEffect(() => {
-    if (!selectedSubjectId && !selectedTopicId && !searchQuery && selectedFilter === 'all') return;
-
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
       if (selectedTopicId) {
-        // Return from Topic Study Detail to Subject Chapters view
         setSelectedTopicId(null);
         return true;
       }
       if (selectedSubjectId) {
-        // Return from Subject Chapters to Subjects List
         setSelectedSubjectId(null);
         return true;
       }
-      if (searchQuery) {
-        setSearchQuery('');
-        return true;
-      }
-      if (selectedFilter !== 'all') {
-        setSelectedFilter('all');
+      if (canGoBack && onGoBack) {
+        onGoBack();
         return true;
       }
       return false;
     });
-
     return () => sub.remove();
-  }, [selectedSubjectId, selectedTopicId, searchQuery, selectedFilter]);
+  }, [selectedTopicId, selectedSubjectId, canGoBack, onGoBack]);
+
+  // Search and Filter States
+  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedFilter, setSelectedFilter] = useState<
+    'all' | 'in_progress' | 'completed' | 'not_started'
+  >('all');
 
   // Filter counts
   const filterCounts = useMemo(() => {
     let inProgress = 0;
     let completed = 0;
     let notStarted = 0;
+
     activeSubjects.forEach((subj) => {
       const allTopics = getAllSubjectTopics(subj);
       const completedCount = allTopics.filter((t) => completedTopicIds.includes(t.id)).length;
@@ -140,6 +221,28 @@ export function SubjectsNotesView({
       in_progress: inProgress,
       completed,
       not_started: notStarted,
+    };
+  }, [activeSubjects, completedTopicIds]);
+
+  // Overall curriculum stats for subjects
+  const overallSubjectsStats = useMemo(() => {
+    let totalTopics = 0;
+    let completedTopics = 0;
+    let masteredSubjects = 0;
+    activeSubjects.forEach((subj) => {
+      const allTopics = getAllSubjectTopics(subj);
+      const completedCount = allTopics.filter((t) => completedTopicIds.includes(t.id)).length;
+      totalTopics += allTopics.length;
+      completedTopics += completedCount;
+      if (allTopics.length > 0 && completedCount === allTopics.length) masteredSubjects++;
+    });
+    const percent = totalTopics > 0 ? Math.round((completedTopics / totalTopics) * 100) : 0;
+    return {
+      totalSubjects: activeSubjects.length,
+      totalTopics,
+      completedTopics,
+      masteredSubjects,
+      percent,
     };
   }, [activeSubjects, completedTopicIds]);
 
@@ -219,8 +322,9 @@ export function SubjectsNotesView({
     if (newlyCompleted) {
       setCompletedTopicIds(updated);
       refreshProgress().catch(() => {});
+      recordStreakActivity().catch(() => {});
     }
-  }, [refreshProgress]);
+  }, [refreshProgress, recordStreakActivity]);
 
   const handleTopicScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
     const { layoutMeasurement, contentOffset, contentSize } = event.nativeEvent;
@@ -245,19 +349,21 @@ export function SubjectsNotesView({
   };
 
   const handleNavigateNextTopic = async (nextId: string) => {
-    // Only mark the current topic that was just read
     const readTopicId = selectedTopicId;
     if (readTopicId) {
       await handleAutoMarkComplete(readTopicId);
     }
-    // Switch to next topic (which is unread)
     setSelectedTopicId(nextId);
   };
 
   const handleToggleComplete = async (topicId: string) => {
+    const wasCompleted = completedTopicIds.includes(topicId);
     const updated = await toggleLessonCompletion(topicId);
     setCompletedTopicIds(updated);
     refreshProgress().catch(() => {});
+    if (!wasCompleted) {
+      recordStreakActivity().catch(() => {});
+    }
   };
 
   const currentSubject = activeSubjects.find((s) => s.id === selectedSubjectId);
@@ -340,7 +446,7 @@ export function SubjectsNotesView({
             styles.detailHeader,
             {
               paddingTop: Math.max(insets.top, 16),
-              borderBottomColor: colors.border,
+              borderBottomColor: colors.borderSubtle,
               backgroundColor: colors.card,
             },
           ]}>
@@ -350,9 +456,10 @@ export function SubjectsNotesView({
               styles.backBtnPill,
               { backgroundColor: colors.cardSecondary, borderColor: colors.border },
               pressed && { opacity: 0.7 },
-            ]}>
-            <Ionicons name="chevron-back" size={17} color={colors.text} />
-            <Text style={[styles.backBtnText, { color: colors.text }]}>Back</Text>
+            ]}
+            hitSlop={8}>
+            <Ionicons name="arrow-back" size={16} color={colors.text} />
+            <Text style={[styles.backBtnText, { color: colors.text }]}>Chapters</Text>
           </Pressable>
 
           {/* Mark as Completed Action Header Button */}
@@ -393,7 +500,8 @@ export function SubjectsNotesView({
           {/* Chapter Breadcrumb & Tag */}
           {currentChapter && (
             <View style={styles.topicBreadcrumbRow}>
-              <View style={[styles.chapterPill, { backgroundColor: `${currentSubject.color}18` }]}>
+              <View style={[styles.chapterPill, { backgroundColor: `${currentSubject.color}18`, borderColor: `${currentSubject.color}35`, borderWidth: 0.5 }]}>
+                <Ionicons name="bookmark-outline" size={11} color={currentSubject.color} style={{ marginRight: 4 }} />
                 <Text style={[styles.chapterPillText, { color: currentSubject.color }]}>
                   {currentChapter.title.toUpperCase()}
                 </Text>
@@ -409,7 +517,7 @@ export function SubjectsNotesView({
             <View style={styles.topicLoadingContainer}>
               <ActivityIndicator size="large" color={currentSubject.color} />
               <Text style={[styles.topicLoadingText, { color: colors.textMuted }]}>
-                Loading topic materials...
+                Loading theoretical notes & proofs...
               </Text>
             </View>
           ) : (
@@ -428,20 +536,26 @@ export function SubjectsNotesView({
                 styles.simCard,
                 {
                   backgroundColor: colors.card,
-                  borderColor: colors.border,
+                  borderColor: isDark ? 'rgba(245, 158, 11, 0.35)' : colors.border,
                 },
               ]}>
+              <View style={[styles.cardAccentLine, { backgroundColor: '#F59E0B' }]} />
               <View style={styles.simHeader}>
                 <View style={styles.simHeaderLeft}>
-                  <Ionicons name="flash" size={16} color="#F59E0B" />
+                  <View style={[styles.simIconBadge, { backgroundColor: 'rgba(245, 158, 11, 0.16)' }]}>
+                    <Ionicons name="flash" size={16} color="#F59E0B" />
+                  </View>
                   <Text style={[styles.simTitle, { color: colors.text }]}>
-                    Interactive Truth Table Lab
+                    Interactive Logic Lab
                   </Text>
                 </View>
-                <Text style={styles.simBadge}>LIVE COMPUTATION</Text>
+                <View style={styles.simLiveBadge}>
+                  <View style={styles.livePulseDot} />
+                  <Text style={styles.simBadgeText}>LIVE ENGINE</Text>
+                </View>
               </View>
               <Text style={[styles.simSub, { color: colors.textSecondary }]}>
-                Toggle P and Q below to see boolean logic and implication evaluate in real time:
+                Toggle P and Q below to evaluate truth values, conjunctions, disjunctions, and implications in real time:
               </Text>
 
               {/* Toggle Switches */}
@@ -451,18 +565,17 @@ export function SubjectsNotesView({
                   style={[
                     styles.toggleBtn,
                     {
-                      backgroundColor: valP ? '#10B981' : colors.cardSecondary,
-                      borderColor: valP ? '#10B981' : colors.border,
+                      backgroundColor: valP ? colors.primary : colors.cardSecondary,
+                      borderColor: valP ? colors.primary : colors.border,
                     },
                   ]}>
-                  <Text style={[styles.toggleBtnText, { color: valP ? '#0F172A' : colors.text }]}>
-                    P = {valP ? 'TRUE (1)' : 'FALSE (0)'}
+                  <Text
+                    style={[
+                      styles.toggleLabel,
+                      { color: valP ? '#0F172A' : colors.text },
+                    ]}>
+                    Input P : {valP ? 'TRUE (1)' : 'FALSE (0)'}
                   </Text>
-                  <Ionicons
-                    name={valP ? 'checkmark-circle' : 'close-circle'}
-                    size={16}
-                    color={valP ? '#0F172A' : colors.textMuted}
-                  />
                 </Pressable>
 
                 <Pressable
@@ -470,64 +583,87 @@ export function SubjectsNotesView({
                   style={[
                     styles.toggleBtn,
                     {
-                      backgroundColor: valQ ? '#10B981' : colors.cardSecondary,
-                      borderColor: valQ ? '#10B981' : colors.border,
+                      backgroundColor: valQ ? colors.primary : colors.cardSecondary,
+                      borderColor: valQ ? colors.primary : colors.border,
                     },
                   ]}>
-                  <Text style={[styles.toggleBtnText, { color: valQ ? '#0F172A' : colors.text }]}>
-                    Q = {valQ ? 'TRUE (1)' : 'FALSE (0)'}
+                  <Text
+                    style={[
+                      styles.toggleLabel,
+                      { color: valQ ? '#0F172A' : colors.text },
+                    ]}>
+                    Input Q : {valQ ? 'TRUE (1)' : 'FALSE (0)'}
                   </Text>
-                  <Ionicons
-                    name={valQ ? 'checkmark-circle' : 'close-circle'}
-                    size={16}
-                    color={valQ ? '#0F172A' : colors.textMuted}
-                  />
                 </Pressable>
               </View>
 
-              {/* Table Matrix */}
+              {/* Truth Table Grid */}
               <View
                 style={[
-                  styles.matrixTable,
-                  { backgroundColor: isDark ? '#090D16' : '#1E293B' },
+                  styles.tableGrid,
+                  {
+                    backgroundColor: colors.cardSecondary,
+                    borderColor: colors.borderSubtle,
+                  },
                 ]}>
-                <View style={styles.matrixRow}>
-                  <Text style={styles.matrixColLabel}>¬P (NOT)</Text>
-                  <Text style={styles.matrixColLabel}>P ∧ Q (AND)</Text>
-                  <Text style={styles.matrixColLabel}>P ∨ Q (OR)</Text>
-                  <Text style={styles.matrixColLabel}>P → Q (IMPLIES)</Text>
-                  <Text style={styles.matrixColLabel}>P ↔ Q (XNOR)</Text>
+                <View style={[styles.tableRow, styles.tableHeaderRow, { borderBottomColor: colors.borderSubtle }]}>
+                  <Text style={[styles.thCell, { color: colors.textMuted }]}>OPERATION</Text>
+                  <Text style={[styles.thCell, { color: colors.textMuted }]}>FORMULA</Text>
+                  <Text style={[styles.thCell, { textAlign: 'right', color: colors.textMuted }]}>
+                    RESULT
+                  </Text>
                 </View>
-                <View style={styles.matrixValuesRow}>
-                  <View style={[styles.matrixCell, notP ? styles.cellTrue : styles.cellFalse]}>
-                    <Text style={styles.cellText}>{notP ? 'T' : 'F'}</Text>
+
+                {[
+                  { name: 'Negation ¬P', formula: 'not P', val: notP },
+                  { name: 'Conjunction P ∧ Q', formula: 'P and Q', val: pAndQ },
+                  { name: 'Disjunction P ∨ Q', formula: 'P or Q', val: pOrQ },
+                  { name: 'Implication P → Q', formula: '¬P ∨ Q', val: pImpliesQ },
+                  { name: 'Equivalence P ↔ Q', formula: 'P == Q', val: pBicondQ },
+                ].map((row, rIdx) => (
+                  <View
+                    key={rIdx}
+                    style={[
+                      styles.tableRow,
+                      { borderBottomColor: colors.borderSubtle },
+                      rIdx % 2 === 1 && { backgroundColor: isDark ? 'rgba(255,255,255,0.02)' : 'rgba(0,0,0,0.015)' },
+                    ]}>
+                    <Text style={[styles.tdCellName, { color: colors.text }]}>{row.name}</Text>
+                    <Text style={[styles.tdCellFormula, { color: colors.textSecondary }]}>
+                      {row.formula}
+                    </Text>
+                    <View
+                      style={[
+                        styles.boolBadge,
+                        {
+                          backgroundColor: row.val
+                            ? 'rgba(16, 185, 129, 0.16)'
+                            : 'rgba(239, 68, 68, 0.16)',
+                        },
+                      ]}>
+                      <Text
+                        style={[
+                          styles.boolText,
+                          { color: row.val ? '#10B981' : '#EF4444' },
+                        ]}>
+                        {row.val ? 'TRUE' : 'FALSE'}
+                      </Text>
+                    </View>
                   </View>
-                  <View style={[styles.matrixCell, pAndQ ? styles.cellTrue : styles.cellFalse]}>
-                    <Text style={styles.cellText}>{pAndQ ? 'T' : 'F'}</Text>
-                  </View>
-                  <View style={[styles.matrixCell, pOrQ ? styles.cellTrue : styles.cellFalse]}>
-                    <Text style={styles.cellText}>{pOrQ ? 'T' : 'F'}</Text>
-                  </View>
-                  <View style={[styles.matrixCell, pImpliesQ ? styles.cellTrue : styles.cellFalse]}>
-                    <Text style={styles.cellText}>{pImpliesQ ? 'T' : 'F'}</Text>
-                  </View>
-                  <View style={[styles.matrixCell, pBicondQ ? styles.cellTrue : styles.cellFalse]}>
-                    <Text style={styles.cellText}>{pBicondQ ? 'T' : 'F'}</Text>
-                  </View>
-                </View>
+                ))}
               </View>
             </View>
           )}
 
-          {/* Navigation Controls: Previous / Next Topic */}
-          <View style={styles.topicNavFooter}>
+          {/* Bottom Next/Prev Topic Navigation Buttons */}
+          <View style={styles.topicBottomNav}>
             {prevTopic ? (
               <Pressable
                 onPress={() => setSelectedTopicId(prevTopic.id)}
                 style={({ pressed }) => [
                   styles.topicNavBtn,
                   { backgroundColor: colors.card, borderColor: colors.border },
-                  pressed && { opacity: 0.7 },
+                  pressed && { opacity: 0.75, transform: [{ scale: 0.99 }] },
                 ]}>
                 <Ionicons name="arrow-back" size={15} color={colors.primary} />
                 <View style={{ flex: 1, marginLeft: 8 }}>
@@ -547,10 +683,10 @@ export function SubjectsNotesView({
                 style={({ pressed }) => [
                   styles.topicNavBtn,
                   { backgroundColor: colors.card, borderColor: colors.border },
-                  pressed && { opacity: 0.7 },
+                  pressed && { opacity: 0.75, transform: [{ scale: 0.99 }] },
                 ]}>
                 <View style={{ flex: 1, marginRight: 8, alignItems: 'flex-end' }}>
-                  <Text style={[styles.topicNavDir, { color: colors.textMuted }]}>NEXT</Text>
+                  <Text style={[styles.topicNavDir, { color: colors.textMuted }]}>NEXT NOTE</Text>
                   <Text style={[styles.topicNavTitle, { color: colors.text }]} numberOfLines={1}>
                     {nextTopic.title}
                   </Text>
@@ -577,13 +713,13 @@ export function SubjectsNotesView({
 
     return (
       <View style={[styles.container, { backgroundColor: colors.background }]}>
-        {/* Back Header: clean back button, no subject name text (matching user spec) */}
+        {/* Top Header Bar */}
         <View
           style={[
-            styles.languageDetailHeader,
+            styles.detailHeader,
             {
               paddingTop: Math.max(insets.top, 16),
-              borderBottomColor: colors.border,
+              borderBottomColor: colors.borderSubtle,
               backgroundColor: colors.card,
             },
           ]}>
@@ -593,10 +729,17 @@ export function SubjectsNotesView({
               styles.backBtnPill,
               { backgroundColor: colors.cardSecondary, borderColor: colors.border },
               pressed && { opacity: 0.7 },
-            ]}>
-            <Ionicons name="chevron-back" size={17} color={colors.text} />
-            <Text style={[styles.backBtnText, { color: colors.text }]}>Subjects Notes</Text>
+            ]}
+            hitSlop={8}>
+            <Ionicons name="arrow-back" size={16} color={colors.text} />
+            <Text style={[styles.backBtnText, { color: colors.text }]}>Academic Notes</Text>
           </Pressable>
+
+          <View style={[styles.headerCodePill, { backgroundColor: `${currentSubject.color}16`, borderColor: `${currentSubject.color}35` }]}>
+            <Text style={[styles.headerCodePillText, { color: currentSubject.color }]}>
+              {currentSubject.badge}
+            </Text>
+          </View>
         </View>
 
         <ScrollView
@@ -612,67 +755,81 @@ export function SubjectsNotesView({
               styles.trackHeroCard,
               { backgroundColor: colors.card, borderColor: colors.border },
             ]}>
-            <View style={styles.trackHeaderRow}>
-              <View style={styles.trackLeftHeader}>
-                <View
-                  style={[
-                    styles.trackIconWrap,
-                    { backgroundColor: `${currentSubject.color}1E` },
-                  ]}>
-                  {isIconUrl(currentSubject.icon) ? (
-                    <Image
-                      source={{ uri: currentSubject.icon }}
-                      style={{ width: 22, height: 22 }}
-                      resizeMode="contain"
-                    />
-                  ) : (
-                    <Ionicons
-                      name={currentSubject.icon as any}
-                      size={22}
-                      color={currentSubject.color}
-                    />
-                  )}
-                </View>
-                <View
-                  style={[
-                    styles.badgePill,
-                    { backgroundColor: `${currentSubject.color}18` },
-                  ]}>
-                  <Text style={[styles.badgeText, { color: currentSubject.color }]}>
-                    {currentSubject.badge}
-                  </Text>
+            <View style={[styles.cardAccentLine, { backgroundColor: currentSubject.color }]} />
+
+            <View style={styles.trackHeroBody}>
+              <View style={styles.trackHeaderRow}>
+                <View style={styles.trackLeftHeader}>
+                  <View
+                    style={[
+                      styles.trackIconWrap,
+                      { backgroundColor: `${currentSubject.color}1E`, borderColor: `${currentSubject.color}35` },
+                    ]}>
+                    {isIconUrl(currentSubject.icon) ? (
+                      <Image
+                        source={{ uri: currentSubject.icon }}
+                        style={{ width: 24, height: 24 }}
+                        resizeMode="contain"
+                      />
+                    ) : (
+                      <Ionicons
+                        name={currentSubject.icon as any}
+                        size={24}
+                        color={currentSubject.color}
+                      />
+                    )}
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={[styles.trackName, { color: colors.text }]}>{currentSubject.name}</Text>
+                    <View style={styles.heroSubMetaRow}>
+                      <View
+                        style={[
+                          styles.badgePill,
+                          { backgroundColor: `${currentSubject.color}18`, borderColor: `${currentSubject.color}30`, borderWidth: 0.5 },
+                        ]}>
+                        <Text style={[styles.badgeText, { color: currentSubject.color }]}>
+                          {currentSubject.badge}
+                        </Text>
+                      </View>
+                      {currentSubject.estHours && (
+                        <Text style={[styles.estHoursText, { color: colors.textMuted }]}>
+                          • {currentSubject.estHours}
+                        </Text>
+                      )}
+                    </View>
+                  </View>
                 </View>
               </View>
 
-              <Text style={[styles.estHoursText, { color: colors.textMuted }]}>
-                {currentSubject.estHours}
+              <Text style={[styles.trackDesc, { color: colors.textSecondary }]}>
+                {currentSubject.description}
               </Text>
-            </View>
 
-            <Text style={[styles.trackName, { color: colors.text }]}>{currentSubject.name}</Text>
-            <Text style={[styles.trackDesc, { color: colors.textSecondary }]}>
-              {currentSubject.description}
-            </Text>
+              {/* Progress Bar & Stats */}
+              <View style={[styles.progressBarBg, { backgroundColor: colors.cardSecondary }]}>
+                <View
+                  style={[
+                    styles.progressBarFill,
+                    { width: `${progressPercent}%`, backgroundColor: currentSubject.color },
+                  ]}
+                />
+              </View>
 
-            {/* Progress Bar */}
-            <View style={[styles.progressBarBg, { backgroundColor: colors.cardSecondary }]}>
-              <View
-                style={[
-                  styles.progressBarFill,
-                  { width: `${progressPercent}%`, backgroundColor: currentSubject.color },
-                ]}
-              />
-            </View>
-
-            <View style={styles.trackStatsRow}>
-              <Text style={[styles.trackStatsText, { color: colors.textMuted }]}>
-                {completedCount} of {allTopics.length} topics completed
-              </Text>
-              <Text style={[styles.trackPercentText, { color: currentSubject.color }]}>
-                {progressPercent}%
-              </Text>
+              <View style={styles.trackStatsRow}>
+                <Text style={[styles.trackStatsText, { color: colors.textMuted }]}>
+                  {completedCount} of {allTopics.length} topics completed
+                </Text>
+                <Text style={[styles.trackPercentText, { color: currentSubject.color }]}>
+                  {progressPercent}%
+                </Text>
+              </View>
             </View>
           </View>
+
+          {/* Section Heading: Chapters */}
+          <Text style={[styles.sectionHeading, { color: colors.textMuted, marginTop: 18, marginBottom: 12 }]}>
+            MODULES & SYLLABUS ({currentSubject.chapters.length})
+          </Text>
 
           {/* Chapters and Subtopics */}
           <View style={styles.chaptersList}>
@@ -685,8 +842,9 @@ export function SubjectsNotesView({
                 chapterTopics.length > 0 && chapterCompleted === chapterTopics.length;
 
               return (
-                <View
+                <AnimatedCard
                   key={chapter.id}
+                  index={chIdx}
                   style={[
                     styles.chapterCard,
                     { backgroundColor: colors.card, borderColor: colors.border },
@@ -698,87 +856,103 @@ export function SubjectsNotesView({
                         styles.chapterNumberBadge,
                         { backgroundColor: colors.cardSecondary },
                       ]}>
-                      <Text style={[styles.chapterNumberText, { color: colors.primary }]}>
-                        0{chIdx + 1}
+                      <Text style={[styles.chapterNumberText, { color: currentSubject.color }]}>
+                        {String(chIdx + 1).padStart(2, '0')}
                       </Text>
                     </View>
-                    <View style={{ flex: 1, marginRight: 8 }}>
+                    <View style={{ flex: 1, gap: 2 }}>
                       <Text style={[styles.chapterTitle, { color: colors.text }]}>
                         {chapter.title}
                       </Text>
-                      {chapter.description ? (
-                        <Text
-                          style={[styles.chapterSubDesc, { color: colors.textMuted }]}
-                          numberOfLines={1}>
-                          {chapter.description}
-                        </Text>
-                      ) : null}
+                      <Text style={[styles.chapterMeta, { color: colors.textMuted }]}>
+                        {chapterTopics.length} {chapterTopics.length === 1 ? 'topic' : 'topics'} • Module {chIdx + 1}
+                      </Text>
                     </View>
+
                     <View
                       style={[
-                        styles.chapterBadgePill,
+                        styles.chapterStatusBadge,
                         {
                           backgroundColor: isChapterDone
-                            ? 'rgba(16, 185, 129, 0.15)'
+                            ? 'rgba(16, 185, 129, 0.14)'
                             : colors.cardSecondary,
                         },
                       ]}>
                       <Text
                         style={[
-                          styles.chapterBadgeText,
+                          styles.chapterStatusText,
                           { color: isChapterDone ? '#10B981' : colors.textMuted },
                         ]}>
-                        {chapterCompleted}/{chapterTopics.length}
+                        {isChapterDone
+                          ? 'COMPLETE'
+                          : `${chapterCompleted}/${chapterTopics.length}`}
                       </Text>
                     </View>
                   </View>
 
                   {/* Subtopics List */}
-                  <View
-                    style={[
-                      styles.subtopicsList,
-                      { borderTopColor: colors.border },
-                    ]}>
-                    {chapterTopics.map((topic) => {
-                      const done = completedTopicIds.includes(topic.id);
+                  <View style={styles.subtopicsContainer}>
+                    {chapterTopics.map((topic, tIdx) => {
+                      const isTopicDone = completedTopicIds.includes(topic.id);
+
                       return (
                         <Pressable
                           key={topic.id}
                           onPress={() => setSelectedTopicId(topic.id)}
                           style={({ pressed }) => [
                             styles.subtopicRow,
-                            { borderBottomColor: colors.border },
-                            pressed && { backgroundColor: colors.cardSecondary },
+                            {
+                              backgroundColor: pressed
+                                ? colors.cardSecondary
+                                : 'transparent',
+                              borderTopColor: colors.borderSubtle,
+                            },
                           ]}>
-                          <View style={styles.subtopicCheckboxCol}>
-                            <Ionicons
-                              name={done ? 'checkmark-circle' : 'ellipse-outline'}
-                              size={20}
-                              color={done ? '#10B981' : colors.textMuted}
-                            />
-                          </View>
+                          <Pressable
+                            onPress={() => handleToggleComplete(topic.id)}
+                            hitSlop={10}
+                            style={[
+                              styles.subtopicCheckBtn,
+                              {
+                                backgroundColor: isTopicDone
+                                  ? '#10B981'
+                                  : colors.cardSecondary,
+                                borderColor: isTopicDone
+                                  ? '#10B981'
+                                  : colors.border,
+                              },
+                            ]}>
+                            {isTopicDone && (
+                              <Ionicons name="checkmark" size={12} color="#FFFFFF" />
+                            )}
+                          </Pressable>
 
-                          <View style={styles.subtopicTitleCol}>
+                          <View style={styles.subtopicInfo}>
                             <Text
                               style={[
                                 styles.subtopicTitle,
                                 {
-                                  color: done ? colors.textMuted : colors.text,
-                                  textDecorationLine: done ? 'line-through' : 'none',
+                                  color: isTopicDone
+                                    ? colors.textSecondary
+                                    : colors.text,
                                 },
-                              ]}>
+                              ]}
+                              numberOfLines={1}>
                               {topic.title}
+                            </Text>
+                            <Text style={[styles.subtopicMetaText, { color: colors.textMuted }]}>
+                              {chIdx + 1}.{tIdx + 1} • {topic.duration || '15 min read'}
                             </Text>
                           </View>
 
                           <View style={styles.subtopicChevronCol}>
-                            <Ionicons name="chevron-forward" size={17} color={colors.textMuted} />
+                            <Ionicons name="chevron-forward" size={16} color={colors.textMuted} />
                           </View>
                         </Pressable>
                       );
                     })}
                   </View>
-                </View>
+                </AnimatedCard>
               );
             })}
           </View>
@@ -792,35 +966,104 @@ export function SubjectsNotesView({
   // ---------------------------------------------------------------------------
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
-      {/* Top Header: icon with text Subjects Notes & tagline */}
+      {/* Top Header */}
       <View
         style={[
           styles.header,
           {
             paddingTop: Math.max(insets.top, 16),
-            borderBottomColor: colors.border,
+            borderBottomColor: colors.borderSubtle,
             backgroundColor: colors.card,
           },
         ]}>
         <View style={styles.headerTitleRow}>
-          <View style={[styles.iconBadge, { backgroundColor: colors.primaryBg }]}>
-            <Ionicons name="book" size={20} color={colors.warning} />
-          </View>
           <View style={{ flex: 1 }}>
-            <Text style={[styles.headerTitle, { color: colors.text }]}>Subjects Notes</Text>
-            <Text style={[styles.headerSub, { color: colors.textSecondary }]}>
-              Academic foundations in discrete math, computation theory, and computer systems
+            <Text style={[styles.headerTitle, { color: colors.text }]}>Academic Notes</Text>
+            <Text style={[styles.headerSub, { color: colors.textSecondary }]} numberOfLines={1}>
+              Theoretical foundations, proofs & system engineering
             </Text>
           </View>
+
+          {isOffline && (
+            <View style={[styles.headerOfflinePill, { backgroundColor: colors.cardSecondary, borderColor: colors.borderSubtle }]}>
+              <Ionicons name="cloud-offline" size={12} color={colors.textMuted} />
+              <Text style={[styles.headerOfflineText, { color: colors.textMuted }]}>Offline</Text>
+            </View>
+          )}
         </View>
       </View>
 
       <ScrollView
         contentContainerStyle={[
           styles.scrollContent,
-          { paddingBottom: Math.max(insets.bottom, 24) + 80 },
+          { paddingBottom: Math.max(insets.bottom, 24) + 84 },
         ]}
         showsVerticalScrollIndicator={false}>
+        {/* Scholar Mastery Deck Card */}
+        <View
+          style={[
+            styles.overviewStatsCard,
+            {
+              backgroundColor: colors.card,
+              borderColor: isDark ? 'rgba(245, 158, 11, 0.35)' : colors.border,
+            },
+          ]}>
+          <View style={[styles.cardAccentLine, { backgroundColor: '#F59E0B' }]} />
+
+          <View style={styles.overviewCardInner}>
+            <View style={styles.overviewTopRow}>
+              <View style={styles.overviewTagBadge}>
+                <Ionicons name="school" size={13} color="#F59E0B" />
+                <Text style={styles.overviewTagText}>CS THEORY & ARCHITECTURE</Text>
+              </View>
+
+              <View style={[styles.masteryPill, { backgroundColor: 'rgba(245, 158, 11, 0.14)' }]}>
+                <Text style={[styles.masteryPillText, { color: '#F59E0B' }]}>
+                  {overallSubjectsStats.percent}% MASTERED
+                </Text>
+              </View>
+            </View>
+
+            {/* Micro Progress Track */}
+            <View style={[styles.overviewTrackBg, { backgroundColor: colors.cardSecondary }]}>
+              <View
+                style={[
+                  styles.overviewTrackFill,
+                  { width: `${overallSubjectsStats.percent}%`, backgroundColor: '#F59E0B' },
+                ]}
+              />
+            </View>
+
+            {/* 3 Metrics Capsule Row */}
+            <View style={[styles.metricsCapsuleRow, { backgroundColor: colors.cardSecondary, borderColor: colors.borderSubtle }]}>
+              <View style={styles.metricColumn}>
+                <Text style={[styles.metricBigNumber, { color: colors.text }]}>
+                  {overallSubjectsStats.totalSubjects}
+                </Text>
+                <Text style={[styles.metricLabel, { color: colors.textMuted }]}>Subjects</Text>
+              </View>
+
+              <View style={[styles.metricDivider, { backgroundColor: colors.borderSubtle }]} />
+
+              <View style={styles.metricColumn}>
+                <Text style={[styles.metricBigNumber, { color: '#10B981' }]}>
+                  {overallSubjectsStats.completedTopics}/{overallSubjectsStats.totalTopics}
+                </Text>
+                <Text style={[styles.metricLabel, { color: colors.textMuted }]}>Notes Done</Text>
+              </View>
+
+              <View style={[styles.metricDivider, { backgroundColor: colors.borderSubtle }]} />
+
+              <View style={styles.metricColumn}>
+                <Text style={[styles.metricBigNumber, { color: colors.primary }]}>
+                  {overallSubjectsStats.masteredSubjects}
+                </Text>
+                <Text style={[styles.metricLabel, { color: colors.textMuted }]}>Completed</Text>
+              </View>
+            </View>
+          </View>
+        </View>
+
         {/* Search Input Bar */}
         <View
           style={[
@@ -830,10 +1073,10 @@ export function SubjectsNotesView({
               borderColor: colors.border,
             },
           ]}>
-          <Ionicons name="search" size={17} color={colors.textMuted} />
+          <Ionicons name="search" size={16} color={colors.textMuted} />
           <TextInput
             style={[styles.searchInput, { color: colors.text }]}
-            placeholder="Search subjects, topics, proofs..."
+            placeholder="Search subjects, proofs, theorems, notes..."
             placeholderTextColor={colors.textMuted}
             value={searchQuery}
             onChangeText={setSearchQuery}
@@ -846,7 +1089,7 @@ export function SubjectsNotesView({
           ) : null}
         </View>
 
-        {/* Filter Pills */}
+        {/* Filter Pills with DemiBold typography */}
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
@@ -912,13 +1155,13 @@ export function SubjectsNotesView({
           <View style={styles.matchingTopicsSection}>
             <View style={styles.matchingTopicsHeaderRow}>
               <View style={styles.matchingTopicsTitleLeft}>
-                <Ionicons name="document-text" size={16} color={colors.warning} />
+                <Ionicons name="document-text" size={16} color="#F59E0B" />
                 <Text style={[styles.matchingTopicsHeading, { color: colors.text }]}>
-                  Matching Topics
+                  Matching Notes
                 </Text>
               </View>
               <View style={[styles.matchingCountBadge, { backgroundColor: colors.cardSecondary }]}>
-                <Text style={[styles.matchingCountBadgeText, { color: colors.warning }]}>
+                <Text style={[styles.matchingCountBadgeText, { color: colors.primary }]}>
                   {matchingTopics.length} found
                 </Text>
               </View>
@@ -940,7 +1183,7 @@ export function SubjectsNotesView({
                         backgroundColor: colors.card,
                         borderColor: colors.border,
                       },
-                      pressed && { opacity: 0.85, borderColor: subject.color },
+                      pressed && { opacity: 0.85, borderColor: subject.color, transform: [{ scale: 0.99 }] },
                     ]}>
                     <View style={styles.matchingTopicLeft}>
                       <View
@@ -978,11 +1221,6 @@ export function SubjectsNotesView({
                               {subject.name}
                             </Text>
                           </View>
-                          <Text
-                            style={[styles.matchingTopicChapter, { color: colors.textMuted }]}
-                            numberOfLines={1}>
-                            • {chapterTitle}
-                          </Text>
                         </View>
                       </View>
                     </View>
@@ -997,14 +1235,8 @@ export function SubjectsNotesView({
         {/* Section Header */}
         <View style={styles.sectionHeaderRow}>
           <Text style={[styles.sectionHeading, { color: colors.textMuted }]}>
-            ACADEMIC SUBJECTS ({filteredSubjects.length})
+            CORE SUBJECTS ({filteredSubjects.length})
           </Text>
-          {isOffline && (
-            <View style={[styles.offlinePill, { backgroundColor: colors.cardSecondary }]}>
-              <Ionicons name="cloud-offline-outline" size={12} color={colors.textMuted} />
-              <Text style={[styles.offlinePillText, { color: colors.textMuted }]}>Cached</Text>
-            </View>
-          )}
         </View>
 
         {/* Empty Filter / Search State */}
@@ -1015,13 +1247,13 @@ export function SubjectsNotesView({
               { backgroundColor: colors.card, borderColor: colors.border },
             ]}>
             <View style={[styles.emptyFilterIconWrap, { backgroundColor: colors.cardSecondary }]}>
-              <Ionicons name="search-outline" size={28} color={colors.textMuted} />
+              <Ionicons name="search-outline" size={26} color={colors.textMuted} />
             </View>
             <Text style={[styles.emptyFilterTitle, { color: colors.text }]}>No matching subjects</Text>
             <Text style={[styles.emptyFilterSub, { color: colors.textSecondary }]}>
               {searchQuery
-                ? `We couldn't find any subjects or topics matching "${searchQuery}".`
-                : 'No academic subjects match the selected filter.'}
+                ? `We couldn't find any subjects or notes matching "${searchQuery}".`
+                : 'No academic subjects match the selected filter category.'}
             </Text>
             <Pressable
               onPress={() => {
@@ -1034,14 +1266,14 @@ export function SubjectsNotesView({
                 pressed && { opacity: 0.85 },
               ]}>
               <Ionicons name="refresh" size={14} color="#0F172A" />
-              <Text style={styles.clearFilterBtnText}>Reset Filters</Text>
+              <Text style={styles.clearFilterBtnText}>Reset Filter</Text>
             </Pressable>
           </View>
         ) : null}
 
         {/* Subjects List Cards */}
         <View style={styles.tracksList}>
-          {filteredSubjects.map((subject) => {
+          {filteredSubjects.map((subject, idx) => {
             const allTopics = getAllSubjectTopics(subject);
             const completedCount = allTopics.filter((t) =>
               completedTopicIds.includes(t.id)
@@ -1052,120 +1284,145 @@ export function SubjectsNotesView({
             const isStarted = completedCount > 0 && !isCompleted;
 
             return (
-              <Pressable
+              <AnimatedCard
                 key={subject.id}
+                index={idx}
                 onPress={() => setSelectedSubjectId(subject.id)}
-                style={({ pressed }) => [
+                style={[
                   styles.trackCard,
                   {
                     backgroundColor: colors.card,
-                    borderColor: colors.border,
-                  },
-                  pressed && {
-                    borderColor: subject.color,
-                    transform: [{ scale: 0.99 }],
+                    borderColor: isCompleted
+                      ? 'rgba(16, 185, 129, 0.45)'
+                      : colors.border,
                   },
                 ]}>
-                {/* Subject Header Row */}
-                <View style={styles.trackHeaderRow}>
-                  <View style={styles.trackLeftHeader}>
-                    <View
-                      style={[
-                        styles.trackIconWrap,
-                        { backgroundColor: `${subject.color}1E` },
-                      ]}>
-                      {isIconUrl(subject.icon) ? (
-                        <Image
-                          source={{ uri: subject.icon }}
-                          style={{ width: 22, height: 22 }}
-                          resizeMode="contain"
-                        />
-                      ) : (
-                        <Ionicons
-                          name={subject.icon as any}
-                          size={22}
-                          color={subject.color}
-                        />
-                      )}
+                {/* Brand Color Top Accent Line */}
+                <View style={[styles.cardAccentLine, { backgroundColor: subject.color }]} />
+
+                <View style={styles.cardInnerPadding}>
+                  {/* Subject Header Row */}
+                  <View style={styles.trackHeaderRow}>
+                    <View style={styles.trackLeftHeader}>
+                      <View
+                        style={[
+                          styles.trackIconWrap,
+                          {
+                            backgroundColor: `${subject.color}1E`,
+                            borderColor: `${subject.color}35`,
+                          },
+                        ]}>
+                        {isIconUrl(subject.icon) ? (
+                          <Image
+                            source={{ uri: subject.icon }}
+                            style={{ width: 24, height: 24 }}
+                            resizeMode="contain"
+                          />
+                        ) : (
+                          <Ionicons
+                            name={subject.icon as any}
+                            size={22}
+                            color={subject.color}
+                          />
+                        )}
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                          <Text style={[styles.trackName, { color: colors.text }]}>{subject.name}</Text>
+                          <View
+                            style={[
+                              styles.badgePill,
+                              { backgroundColor: `${subject.color}16`, borderColor: `${subject.color}30`, borderWidth: 0.5 },
+                            ]}>
+                            <Text style={[styles.badgeText, { color: subject.color }]}>
+                              {subject.badge}
+                            </Text>
+                          </View>
+                        </View>
+                        {subject.estHours ? (
+                          <View style={styles.estHoursRow}>
+                            <Ionicons name="time-outline" size={11} color={colors.textMuted} />
+                            <Text style={[styles.estHoursText, { color: colors.textMuted }]}>
+                              {subject.estHours}
+                            </Text>
+                          </View>
+                        ) : null}
+                      </View>
                     </View>
+
                     <View
                       style={[
-                        styles.badgePill,
-                        { backgroundColor: `${subject.color}18` },
+                        styles.statusPill,
+                        isCompleted
+                          ? {
+                              backgroundColor: 'rgba(16, 185, 129, 0.14)',
+                              borderColor: '#10B981',
+                            }
+                          : isStarted
+                          ? {
+                              backgroundColor: `${subject.color}16`,
+                              borderColor: `${subject.color}40`,
+                            }
+                          : {
+                              backgroundColor: colors.cardSecondary,
+                              borderColor: colors.borderSubtle,
+                            },
                       ]}>
-                      <Text style={[styles.badgeText, { color: subject.color }]}>
-                        {subject.badge}
+                      <Text
+                        style={[
+                          styles.statusPillText,
+                          {
+                            color: isCompleted
+                              ? '#10B981'
+                              : isStarted
+                              ? subject.color
+                              : colors.textMuted,
+                          },
+                        ]}>
+                        {isCompleted ? 'COMPLETED' : isStarted ? 'IN PROGRESS' : 'NOT STARTED'}
                       </Text>
                     </View>
                   </View>
 
-                  <View
-                    style={[
-                      styles.statusPill,
-                      isCompleted
-                        ? {
-                            backgroundColor: 'rgba(16, 185, 129, 0.15)',
-                            borderColor: '#10B981',
-                          }
-                        : isStarted
-                        ? {
-                            backgroundColor: `${subject.color}18`,
-                            borderColor: subject.color,
-                          }
-                        : {
-                            backgroundColor: colors.cardSecondary,
-                            borderColor: colors.border,
-                          },
-                    ]}>
-                    <Text
+                  {/* Subject Description */}
+                  <Text style={[styles.trackDesc, { color: colors.textSecondary }]} numberOfLines={2}>
+                    {subject.description}
+                  </Text>
+
+                  {/* Progress Bar & Footer */}
+                  <View style={[styles.progressBarBg, { backgroundColor: colors.cardSecondary }]}>
+                    <View
                       style={[
-                        styles.statusPillText,
+                        styles.progressBarFill,
                         {
-                          color: isCompleted
-                            ? '#10B981'
-                            : isStarted
-                            ? subject.color
-                            : colors.textMuted,
+                          width: `${percent}%`,
+                          backgroundColor: isCompleted ? '#10B981' : subject.color,
                         },
-                      ]}>
-                      {isCompleted ? 'COMPLETED' : isStarted ? 'IN PROGRESS' : 'START SUBJECT'}
+                      ]}
+                    />
+                  </View>
+
+                  <View style={styles.cardFooterRow}>
+                    <Text style={[styles.trackStatsText, { color: colors.textMuted }]}>
+                      {completedCount} of {allTopics.length} topics completed
                     </Text>
+
+                    <View style={styles.ctaPillWrap}>
+                      <Text
+                        style={[
+                          styles.ctaPillText,
+                          { color: isCompleted ? '#10B981' : subject.color },
+                        ]}>
+                        {isCompleted
+                          ? 'Review Notes ➔'
+                          : isStarted
+                          ? 'Resume ➔'
+                          : 'Explore ➔'}
+                      </Text>
+                    </View>
                   </View>
                 </View>
-
-                {/* Subject Title and Description */}
-                <Text style={[styles.trackName, { color: colors.text }]}>{subject.name}</Text>
-                <Text style={[styles.trackDesc, { color: colors.textSecondary }]}>
-                  {subject.description}
-                </Text>
-
-                {/* Progress Bar */}
-                <View style={[styles.progressBarBg, { backgroundColor: colors.cardSecondary }]}>
-                  <View
-                    style={[
-                      styles.progressBarFill,
-                      {
-                        width: `${percent}%`,
-                        backgroundColor: isCompleted ? '#10B981' : subject.color,
-                      },
-                    ]}
-                  />
-                </View>
-
-                {/* Card Footer */}
-                <View style={styles.trackStatsRow}>
-                  <Text style={[styles.trackStatsText, { color: colors.textMuted }]}>
-                    {completedCount} of {allTopics.length} topics completed
-                  </Text>
-                  <Text
-                    style={[
-                      styles.trackPercentText,
-                      { color: isCompleted ? '#10B981' : subject.color },
-                    ]}>
-                    {percent}%
-                  </Text>
-                </View>
-              </Pressable>
+              </AnimatedCard>
             );
           })}
         </View>
@@ -1192,9 +1449,9 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   headerBackBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
+    width: 38,
+    height: 38,
+    borderRadius: 12,
     borderWidth: 1,
     justifyContent: 'center',
     alignItems: 'center',
@@ -1203,18 +1460,34 @@ const styles = StyleSheet.create({
     width: 38,
     height: 38,
     borderRadius: 12,
+    borderWidth: 1,
     justifyContent: 'center',
     alignItems: 'center',
   },
   headerTitle: {
     fontFamily: Fonts.heading,
     fontSize: 21,
-    fontWeight: '700',
+    fontWeight: '800',
+    letterSpacing: -0.4,
   },
   headerSub: {
     fontFamily: Fonts.body,
-    fontSize: 13,
+    fontSize: 12.5,
     marginTop: 2,
+  },
+  headerOfflinePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  headerOfflineText: {
+    fontFamily: Fonts.mono,
+    fontSize: 10,
+    fontWeight: '700',
   },
   scrollContent: {
     paddingHorizontal: 16,
@@ -1255,9 +1528,9 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   filterChipText: {
-    fontFamily: Fonts.body,
-    fontSize: 12.5,
-    fontWeight: '600',
+    fontFamily: Fonts.headingDemiBold,
+    fontSize: 12,
+    letterSpacing: 0.3,
   },
   filterChipCountBadge: {
     paddingHorizontal: 6,
@@ -1266,8 +1539,9 @@ const styles = StyleSheet.create({
   },
   filterChipCountText: {
     fontFamily: Fonts.mono,
-    fontSize: 11,
+    fontSize: 10.5,
     fontWeight: '700',
+    fontVariant: ['tabular-nums'],
   },
 
   // Matching Topics (Search results)
@@ -1287,7 +1561,7 @@ const styles = StyleSheet.create({
   },
   matchingTopicsHeading: {
     fontFamily: Fonts.heading,
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '700',
   },
   matchingCountBadge: {
@@ -1308,9 +1582,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     borderWidth: 1,
-    borderRadius: 12,
+    borderRadius: 14,
     paddingHorizontal: 12,
-    paddingVertical: 10,
+    paddingVertical: 11,
     gap: 10,
   },
   matchingTopicLeft: {
@@ -1362,21 +1636,21 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingVertical: 36,
     paddingHorizontal: 20,
-    borderRadius: 16,
+    borderRadius: 18,
     borderWidth: 1,
     marginBottom: 20,
   },
   emptyFilterIconWrap: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
+    width: 52,
+    height: 52,
+    borderRadius: 16,
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 12,
   },
   emptyFilterTitle: {
     fontFamily: Fonts.heading,
-    fontSize: 17,
+    fontSize: 16.5,
     fontWeight: '700',
     marginBottom: 4,
   },
@@ -1393,12 +1667,11 @@ const styles = StyleSheet.create({
     gap: 6,
     paddingHorizontal: 16,
     paddingVertical: 9,
-    borderRadius: 20,
+    borderRadius: 12,
   },
   clearFilterBtnText: {
-    fontFamily: Fonts.body,
+    fontFamily: Fonts.headingMedium,
     fontSize: 13,
-    fontWeight: '700',
     color: '#0F172A',
   },
 
@@ -1407,26 +1680,92 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 14,
+    marginBottom: 12,
   },
   sectionHeading: {
+    fontFamily: Fonts.headingDemiBold,
+    fontSize: 12,
+    letterSpacing: 0.6,
+    textTransform: 'uppercase',
+  },
+
+  // Scholar Mastery Overview Card
+  overviewStatsCard: {
+    borderRadius: 22,
+    borderWidth: 1,
+    overflow: 'hidden',
+    marginBottom: 16,
+    position: 'relative',
+  },
+  overviewCardInner: {
+    padding: 18,
+  },
+  overviewTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 12,
+  },
+  overviewTagBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  overviewTagText: {
     fontFamily: Fonts.mono,
     fontSize: 11,
     fontWeight: '700',
-    letterSpacing: 0.8,
+    color: '#F59E0B',
+    letterSpacing: 0.5,
   },
-  offlinePill: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
+  masteryPill: {
     paddingHorizontal: 8,
     paddingVertical: 3,
-    borderRadius: 6,
+    borderRadius: 8,
   },
-  offlinePillText: {
+  masteryPillText: {
     fontFamily: Fonts.mono,
-    fontSize: 10,
-    fontWeight: '600',
+    fontSize: 10.5,
+    fontWeight: '800',
+    fontVariant: ['tabular-nums'],
+  },
+  overviewTrackBg: {
+    height: 6,
+    borderRadius: 3,
+    overflow: 'hidden',
+    marginBottom: 14,
+  },
+  overviewTrackFill: {
+    height: '100%',
+    borderRadius: 3,
+  },
+  metricsCapsuleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-around',
+    borderRadius: 14,
+    borderWidth: 1,
+    paddingVertical: 10,
+    paddingHorizontal: 6,
+  },
+  metricColumn: {
+    alignItems: 'center',
+    flex: 1,
+  },
+  metricBigNumber: {
+    fontFamily: Fonts.heading,
+    fontSize: 16,
+    fontWeight: '800',
+    fontVariant: ['tabular-nums'],
+  },
+  metricLabel: {
+    fontFamily: Fonts.body,
+    fontSize: 10.5,
+    marginTop: 2,
+  },
+  metricDivider: {
+    width: 1,
+    height: 22,
   },
 
   // Subject Tracks List
@@ -1435,38 +1774,59 @@ const styles = StyleSheet.create({
   },
   trackCard: {
     borderWidth: 1,
-    borderRadius: 18,
-    padding: 18,
-    marginBottom: 4,
+    borderRadius: 20,
+    overflow: 'hidden',
+    marginBottom: 2,
+  },
+  cardAccentLine: {
+    height: 3.5,
+    width: '100%',
+  },
+  cardInnerPadding: {
+    padding: 16,
   },
   trackHeaderRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 12,
+    alignItems: 'flex-start',
+    gap: 8,
   },
   trackLeftHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
+    gap: 12,
+    flex: 1,
   },
   trackIconWrap: {
-    width: 40,
-    height: 40,
-    borderRadius: 12,
-    justifyContent: 'center',
+    width: 44,
+    height: 44,
+    borderRadius: 14,
+    borderWidth: 1,
     alignItems: 'center',
+    justifyContent: 'center',
+  },
+  trackName: {
+    fontFamily: Fonts.heading,
+    fontSize: 16.5,
+    fontWeight: '800',
+    letterSpacing: -0.3,
   },
   badgePill: {
-    paddingHorizontal: 8,
-    paddingVertical: 4,
+    paddingHorizontal: 7,
+    paddingVertical: 2,
     borderRadius: 6,
   },
   badgeText: {
     fontFamily: Fonts.mono,
-    fontSize: 11,
-    fontWeight: '700',
-    letterSpacing: 0.5,
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.4,
+  },
+  estHoursRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginTop: 3,
   },
   estHoursText: {
     fontFamily: Fonts.mono,
@@ -1474,419 +1834,403 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   statusPill: {
-    paddingHorizontal: 9,
-    paddingVertical: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 3.5,
     borderRadius: 8,
     borderWidth: 1,
   },
   statusPillText: {
     fontFamily: Fonts.mono,
-    fontSize: 10,
-    fontWeight: '700',
-    letterSpacing: 0.5,
-  },
-  trackName: {
-    fontFamily: Fonts.heading,
-    fontSize: 19,
+    fontSize: 9.5,
     fontWeight: '800',
-    marginBottom: 6,
+    letterSpacing: 0.4,
   },
   trackDesc: {
     fontFamily: Fonts.body,
     fontSize: 13,
     lineHeight: 18,
+    marginTop: 10,
+    marginBottom: 12,
+  },
+  sampleChipsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
     marginBottom: 14,
   },
+  sampleChipPill: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 7,
+    borderWidth: 1,
+    maxWidth: '48%',
+  },
+  sampleChipText: {
+    fontFamily: Fonts.body,
+    fontSize: 11,
+  },
   progressBarBg: {
-    height: 8,
-    borderRadius: 4,
+    height: 5,
+    borderRadius: 2.5,
     overflow: 'hidden',
-    marginTop: 4,
+    marginBottom: 10,
   },
   progressBarFill: {
     height: '100%',
-    borderRadius: 4,
+    borderRadius: 2.5,
   },
-  trackStatsRow: {
+  cardFooterRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    marginTop: 8,
+    justifyContent: 'space-between',
+    paddingTop: 2,
   },
   trackStatsText: {
     fontFamily: Fonts.body,
-    fontSize: 12,
+    fontSize: 11.5,
+    fontVariant: ['tabular-nums'],
   },
-  trackPercentText: {
-    fontFamily: Fonts.mono,
-    fontSize: 12,
-    fontWeight: '700',
-  },
-
-  // View 2: Subject Chapters Detail Screen
-  languageDetailHeader: {
+  ctaPillWrap: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingBottom: 12,
+  },
+  ctaPillText: {
+    fontFamily: Fonts.headingDemiBold,
+    fontSize: 12,
+  },
+
+  // ── VIEW 2: CHAPTER DETAIL VIEW ───────────────────────────
+  detailHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 18,
+    paddingBottom: 14,
     borderBottomWidth: 1,
   },
   backBtnPill: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
+    gap: 6,
     paddingHorizontal: 12,
     paddingVertical: 7,
-    borderRadius: 20,
+    borderRadius: 12,
     borderWidth: 1,
   },
   backBtnText: {
-    fontFamily: Fonts.bodyMedium,
+    fontFamily: Fonts.headingMedium,
     fontSize: 13,
-    fontWeight: '600',
   },
-  trackHeroCard: {
-    borderWidth: 1,
-    borderRadius: 18,
-    padding: 18,
-    marginBottom: 18,
-  },
-  chaptersList: {
-    gap: 14,
-  },
-  chapterCard: {
-    borderWidth: 1,
-    borderRadius: 16,
-    overflow: 'hidden',
-  },
-  chapterHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 14,
-  },
-  chapterNumberBadge: {
-    width: 28,
-    height: 28,
-    borderRadius: 8,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 10,
-  },
-  chapterNumberText: {
-    fontFamily: Fonts.mono,
-    fontSize: 12,
-    fontWeight: '800',
-  },
-  chapterTitle: {
-    fontFamily: Fonts.heading,
-    fontSize: 15,
-    fontWeight: '700',
-  },
-  chapterSubDesc: {
-    fontFamily: Fonts.body,
-    fontSize: 12,
-    marginTop: 2,
-  },
-  chapterBadgePill: {
-    paddingHorizontal: 8,
+  headerCodePill: {
+    paddingHorizontal: 9,
     paddingVertical: 4,
-    borderRadius: 6,
+    borderRadius: 8,
+    borderWidth: 1,
   },
-  chapterBadgeText: {
+  headerCodePillText: {
     fontFamily: Fonts.mono,
     fontSize: 11,
-    fontWeight: '700',
-  },
-  subtopicsList: {
-    borderTopWidth: 1,
-  },
-  subtopicRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-  },
-  subtopicCheckboxCol: {
-    marginRight: 10,
-  },
-  subtopicTitleCol: {
-    flex: 1,
-    marginRight: 8,
-  },
-  subtopicTitle: {
-    fontFamily: Fonts.body,
-    fontSize: 14,
-    fontWeight: '400',
-    lineHeight: 20,
-  },
-  subtopicChevronCol: {
-    marginLeft: 4,
-  },
-
-  // View 3: In-Depth Topic Study Detail
-  detailHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingBottom: 12,
-    borderBottomWidth: 1,
+    fontWeight: '800',
   },
   headerCompleteBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
     paddingHorizontal: 12,
-    paddingVertical: 7,
-    borderRadius: 20,
+    paddingVertical: 6.5,
+    borderRadius: 12,
     borderWidth: 1,
   },
   headerCompleteText: {
-    fontFamily: Fonts.mono,
-    fontSize: 12,
-    fontWeight: '700',
+    fontFamily: Fonts.headingMedium,
+    fontSize: 12.5,
   },
-  topicBreadcrumbRow: {
+  trackHeroCard: {
+    borderRadius: 22,
+    borderWidth: 1,
+    overflow: 'hidden',
+    marginBottom: 6,
+  },
+  trackHeroBody: {
+    padding: 18,
+  },
+  heroSubMetaRow: {
     flexDirection: 'row',
     alignItems: 'center',
+    gap: 6,
+    marginTop: 4,
+  },
+  trackStatsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 6,
+  },
+  trackPercentText: {
+    fontFamily: Fonts.mono,
+    fontSize: 12,
+    fontWeight: '800',
+    fontVariant: ['tabular-nums'],
+  },
+  chaptersList: {
+    gap: 14,
+  },
+  chapterCard: {
+    borderRadius: 18,
+    borderWidth: 1,
+    overflow: 'hidden',
+  },
+  chapterHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    padding: 16,
+  },
+  chapterNumberBadge: {
+    width: 38,
+    height: 38,
+    borderRadius: 12,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  chapterNumberText: {
+    fontFamily: Fonts.mono,
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  chapterTitle: {
+    fontFamily: Fonts.heading,
+    fontSize: 15.5,
+    fontWeight: '700',
+  },
+  chapterMeta: {
+    fontFamily: Fonts.body,
+    fontSize: 11.5,
+  },
+  chapterStatusBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 3.5,
+    borderRadius: 8,
+  },
+  chapterStatusText: {
+    fontFamily: Fonts.mono,
+    fontSize: 10,
+    fontWeight: '800',
+    fontVariant: ['tabular-nums'],
+  },
+  subtopicsContainer: {
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(0,0,0,0.06)',
+  },
+  subtopicRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderTopWidth: 1,
+  },
+  subtopicCheckBtn: {
+    width: 22,
+    height: 22,
+    borderRadius: 7,
+    borderWidth: 1.5,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  subtopicInfo: {
+    flex: 1,
+  },
+  subtopicTitle: {
+    fontFamily: Fonts.bodyMedium,
+    fontSize: 13.5,
+  },
+  subtopicMetaText: {
+    fontFamily: Fonts.mono,
+    fontSize: 10.5,
+    marginTop: 2,
+  },
+  subtopicChevronCol: {
+    paddingLeft: 4,
+  },
+
+  // ── VIEW 3: TOPIC STUDY DETAIL ────────────────────────────
+  topicBreadcrumbRow: {
     marginBottom: 8,
   },
   chapterPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
     paddingHorizontal: 8,
-    paddingVertical: 4,
+    paddingVertical: 3,
     borderRadius: 6,
   },
   chapterPillText: {
     fontFamily: Fonts.mono,
     fontSize: 10,
     fontWeight: '800',
-    letterSpacing: 0.6,
+    letterSpacing: 0.5,
   },
   topicDetailTitle: {
     fontFamily: Fonts.heading,
     fontSize: 22,
     fontWeight: '800',
-    marginBottom: 16,
+    letterSpacing: -0.4,
     lineHeight: 28,
-  },
-  formulaBox: {
-    borderWidth: 1,
-    borderRadius: 12,
-    padding: 14,
     marginBottom: 16,
   },
-  formulaTag: {
-    fontFamily: Fonts.mono,
-    fontSize: 10,
-    fontWeight: '700',
-    letterSpacing: 0.5,
-    marginBottom: 6,
+  topicLoadingContainer: {
+    paddingVertical: 48,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 12,
   },
-  formulaText: {
-    fontFamily: Fonts.mono,
-    fontSize: 16,
-    fontWeight: '800',
+  topicLoadingText: {
+    fontFamily: Fonts.bodyMedium,
+    fontSize: 13,
   },
-  definitionCard: {
-    borderWidth: 1,
-    borderRadius: 14,
-    padding: 16,
-    marginBottom: 16,
-  },
-  sectionSubtitle: {
-    fontFamily: Fonts.heading,
-    fontSize: 15,
-    fontWeight: '700',
-    marginBottom: 8,
-  },
-  defText: {
-    fontFamily: Fonts.body,
-    fontSize: 14,
-    lineHeight: 20,
-  },
-  propertiesCard: {
-    borderWidth: 1,
-    borderRadius: 14,
-    padding: 16,
-    marginBottom: 16,
-  },
-  propItem: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 8,
-    marginBottom: 6,
-  },
-  bulletSymbol: {
-    fontSize: 14,
-    marginTop: 1,
-  },
-  propItemText: {
-    fontFamily: Fonts.body,
-    fontSize: 13.5,
-    lineHeight: 19,
-    flex: 1,
-  },
-  exampleBox: {
-    borderWidth: 1,
-    borderRadius: 14,
-    padding: 14,
-    marginBottom: 18,
-  },
-  exampleTag: {
-    fontFamily: Fonts.mono,
-    fontSize: 10,
-    fontWeight: '700',
-    letterSpacing: 0.5,
-    marginBottom: 4,
-  },
-  exampleText: {
-    fontFamily: Fonts.body,
-    fontSize: 13.5,
-    lineHeight: 19,
-  },
-
-  // Interactive Truth Table Simulator
   simCard: {
+    borderRadius: 20,
     borderWidth: 1,
-    borderRadius: 16,
-    padding: 16,
+    overflow: 'hidden',
+    marginTop: 20,
     marginBottom: 20,
+    padding: 18,
   },
   simHeader: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 4,
+    justifyContent: 'space-between',
+    marginBottom: 8,
   },
   simHeaderLeft: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
+    gap: 8,
+  },
+  simIconBadge: {
+    width: 32,
+    height: 32,
+    borderRadius: 10,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   simTitle: {
     fontFamily: Fonts.heading,
     fontSize: 16,
     fontWeight: '700',
   },
-  simBadge: {
+  simLiveBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: 'rgba(245, 158, 11, 0.12)',
+    paddingHorizontal: 7,
+    paddingVertical: 2.5,
+    borderRadius: 6,
+  },
+  livePulseDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#F59E0B',
+  },
+  simBadgeText: {
     fontFamily: Fonts.mono,
-    fontSize: 10,
+    fontSize: 9.5,
     fontWeight: '800',
     color: '#F59E0B',
-    backgroundColor: 'rgba(245, 158, 11, 0.15)',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 4,
   },
   simSub: {
     fontFamily: Fonts.body,
     fontSize: 12.5,
     lineHeight: 17,
-    marginBottom: 12,
+    marginBottom: 14,
   },
   toggleRow: {
     flexDirection: 'row',
     gap: 10,
-    marginBottom: 14,
+    marginBottom: 16,
   },
   toggleBtn: {
     flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 12,
     paddingVertical: 10,
-    borderRadius: 10,
+    paddingHorizontal: 12,
+    borderRadius: 12,
     borderWidth: 1,
+    alignItems: 'center',
   },
-  toggleBtnText: {
+  toggleLabel: {
     fontFamily: Fonts.mono,
-    fontSize: 12.5,
+    fontSize: 11,
     fontWeight: '700',
   },
-  matrixTable: {
-    borderRadius: 10,
-    padding: 10,
+  tableGrid: {
+    borderRadius: 14,
+    borderWidth: 1,
+    overflow: 'hidden',
   },
-  matrixRow: {
+  tableRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    paddingBottom: 6,
+    alignItems: 'center',
+    paddingVertical: 9,
+    paddingHorizontal: 12,
     borderBottomWidth: 1,
-    borderBottomColor: '#334155',
   },
-  matrixColLabel: {
+  tableHeaderRow: {
+    paddingVertical: 7,
+  },
+  thCell: {
     fontFamily: Fonts.mono,
-    fontSize: 10.5,
-    color: '#94A3B8',
-    fontWeight: '600',
+    fontSize: 9.5,
+    fontWeight: '700',
     flex: 1,
-    textAlign: 'center',
   },
-  matrixValuesRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    paddingTop: 8,
+  tdCellName: {
+    fontFamily: Fonts.bodyMedium,
+    fontSize: 12.5,
+    flex: 1.2,
   },
-  matrixCell: {
+  tdCellFormula: {
+    fontFamily: Fonts.mono,
+    fontSize: 11,
     flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 6,
+  },
+  boolBadge: {
+    paddingHorizontal: 7,
+    paddingVertical: 2,
     borderRadius: 6,
-    marginHorizontal: 3,
-  },
-  cellTrue: {
-    backgroundColor: 'rgba(16, 185, 129, 0.25)',
-  },
-  cellFalse: {
-    backgroundColor: 'rgba(239, 68, 68, 0.25)',
-  },
-  cellText: {
-    fontFamily: Fonts.mono,
-    fontSize: 13.5,
-    fontWeight: '800',
-    color: '#F8FAFC',
-  },
-
-  topicLoadingContainer: {
-    paddingVertical: 50,
+    minWidth: 46,
     alignItems: 'center',
-    justifyContent: 'center',
-    gap: 12,
   },
-  topicLoadingText: {
+  boolText: {
     fontFamily: Fonts.mono,
-    fontSize: 12,
+    fontSize: 10,
+    fontWeight: '800',
   },
-
-  // Pagination navigation footer
-  topicNavFooter: {
+  topicBottomNav: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     gap: 12,
-    marginTop: 10,
+    marginTop: 20,
   },
   topicNavBtn: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
+    padding: 13,
+    borderRadius: 14,
     borderWidth: 1,
-    borderRadius: 12,
-    padding: 12,
   },
   topicNavDir: {
     fontFamily: Fonts.mono,
     fontSize: 9.5,
     fontWeight: '700',
     letterSpacing: 0.5,
-    marginBottom: 2,
   },
   topicNavTitle: {
-    fontFamily: Fonts.bodyMedium,
-    fontSize: 12.5,
-    fontWeight: '600',
+    fontFamily: Fonts.headingMedium,
+    fontSize: 13,
+    marginTop: 2,
   },
 });
-

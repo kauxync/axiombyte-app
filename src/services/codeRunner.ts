@@ -1,6 +1,6 @@
 /**
- * Piston & Web Code Execution Service
- * Supports backend execution (C, C++, Python, Rust, Assembly, Java, Go, etc.)
+ * Code Execution Service
+ * Supports multi-provider execution (Wandbox, Piston fallback)
  * and client-side web execution (HTML, CSS, JavaScript).
  */
 
@@ -12,7 +12,7 @@ export interface ExecutionResult {
   version?: string;
 }
 
-const LANGUAGE_MAP: Record<string, string> = {
+const PISTON_LANGUAGE_MAP: Record<string, string> = {
   c: 'c',
   cpp: 'c++',
   'c++': 'c++',
@@ -41,6 +41,32 @@ const LANGUAGE_MAP: Record<string, string> = {
   cs: 'csharp',
 };
 
+const WANDBOX_COMPILER_MAP: Record<string, string> = {
+  c: 'gcc-head-c',
+  cpp: 'gcc-head',
+  'c++': 'gcc-head',
+  python: 'cpython-head',
+  py: 'cpython-head',
+  python3: 'cpython-head',
+  rust: 'rust-head',
+  rs: 'rust-head',
+  java: 'openjdk-head',
+  javascript: 'nodejs-head',
+  js: 'nodejs-head',
+  typescript: 'typescript-head',
+  ts: 'typescript-head',
+  go: 'go-head',
+  golang: 'go-head',
+  bash: 'bash',
+  sh: 'bash',
+  csharp: 'dotnetcore-head',
+  'c#': 'dotnetcore-head',
+  cs: 'dotnetcore-head',
+  sql: 'sqlite-head',
+  sqlite: 'sqlite-head',
+  sqlite3: 'sqlite-head',
+};
+
 /**
  * Checks if a language is a web/browser frontend language rendered visually (HTML, CSS, JS)
  */
@@ -62,28 +88,99 @@ export function isWebLanguage(lang?: string): boolean {
 export function isLanguageRunnable(lang?: string): boolean {
   if (!lang) return false;
   const clean = lang.trim().toLowerCase();
-  return isWebLanguage(clean) || clean in LANGUAGE_MAP;
+  return isWebLanguage(clean) || clean in WANDBOX_COMPILER_MAP || clean in PISTON_LANGUAGE_MAP;
 }
 
 /**
- * Executes source code via Piston API (for backend CLI languages)
+ * Executes code via Wandbox API (Open, unauthenticated, highly reliable)
  */
-export async function executeCodeWithPiston(
-  language: string,
+async function executeWithWandbox(
+  compiler: string,
+  sourceCode: string,
+  language: string
+): Promise<ExecutionResult | null> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 15000);
+
+  try {
+    const res = await fetch('https://wandbox.org/api/compile.json', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      body: JSON.stringify({
+        code: sourceCode,
+        compiler,
+        options: '',
+        stdin: '',
+      }),
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeoutId);
+
+    if (!res.ok) {
+      return null;
+    }
+
+    const data = await res.json();
+    const status = String(data.status ?? '');
+    const isSuccess = status === '0';
+
+    // Compilation error / compiler diagnostics
+    const compilerError = (data.compiler_error || '').trim();
+    const compilerMessage = (data.compiler_message || '').trim();
+    if (!isSuccess && (compilerError || compilerMessage)) {
+      return {
+        success: false,
+        output: compilerError || compilerMessage,
+        isError: true,
+        language,
+      };
+    }
+
+    // Program stdout and stderr
+    const stdout = (data.program_output || '').trim();
+    const stderr = (data.program_error || '').trim();
+
+    if (stderr && stdout) {
+      return {
+        success: isSuccess,
+        output: `${stdout}\n\n[Diagnostics / Stderr]:\n${stderr}`,
+        isError: !isSuccess,
+        language,
+      };
+    }
+
+    if (stderr && !stdout) {
+      return {
+        success: isSuccess,
+        output: stderr,
+        isError: !isSuccess,
+        language,
+      };
+    }
+
+    return {
+      success: isSuccess,
+      output: stdout || (isSuccess ? 'Program exited 0 with no stdout.' : `Process exited with code ${status}.`),
+      isError: !isSuccess,
+      language,
+    };
+  } catch {
+    clearTimeout(timeoutId);
+    return null;
+  }
+}
+
+/**
+ * Executes source code via Piston API
+ */
+async function executeWithPiston(
+  targetLang: string,
   sourceCode: string
 ): Promise<ExecutionResult> {
-  const cleanLang = (language || 'c').trim().toLowerCase();
-  const targetLang = LANGUAGE_MAP[cleanLang] || cleanLang;
-
-  if (!sourceCode.trim()) {
-    return {
-      success: false,
-      output: 'Source code cannot be empty.',
-      isError: true,
-      language: targetLang,
-    };
-  }
-
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 15000);
 
@@ -103,6 +200,15 @@ export async function executeCodeWithPiston(
     });
 
     clearTimeout(timeoutId);
+
+    if (res.status === 401) {
+      return {
+        success: false,
+        output: 'Runner service is currently restricted by the public upstream server (HTTP 401 Unauthorized). Please try again shortly or check compiler support.',
+        isError: true,
+        language: targetLang,
+      };
+    }
 
     if (!res.ok) {
       return {
@@ -163,7 +269,7 @@ export async function executeCodeWithPiston(
     if (json.message) {
       return {
         success: false,
-        output: `Piston Notice: ${json.message}`,
+        output: `Notice: ${json.message}`,
         isError: true,
         language: targetLang,
       };
@@ -176,6 +282,7 @@ export async function executeCodeWithPiston(
       language: targetLang,
     };
   } catch (err: any) {
+    clearTimeout(timeoutId);
     if (err?.name === 'AbortError') {
       return {
         success: false,
@@ -187,9 +294,44 @@ export async function executeCodeWithPiston(
 
     return {
       success: false,
-      output: 'Network error: Unable to reach compiler server. Please check internet connection.',
+      output: 'Network error: Unable to reach compiler server. Please check your internet connection.',
       isError: true,
       language: targetLang,
     };
   }
 }
+
+/**
+ * Executes source code across multi-provider runner (Wandbox with Piston fallback)
+ */
+export async function executeCodeWithPiston(
+  language: string,
+  sourceCode: string
+): Promise<ExecutionResult> {
+  const cleanLang = (language || 'c').trim().toLowerCase();
+  const targetLang = PISTON_LANGUAGE_MAP[cleanLang] || cleanLang;
+
+  if (!sourceCode.trim()) {
+    return {
+      success: false,
+      output: 'Source code cannot be empty.',
+      isError: true,
+      language: targetLang,
+    };
+  }
+
+  // 1. Try Wandbox primary execution engine
+  const wandboxCompiler = WANDBOX_COMPILER_MAP[cleanLang];
+  if (wandboxCompiler) {
+    const wandboxResult = await executeWithWandbox(wandboxCompiler, sourceCode, cleanLang);
+    if (wandboxResult) {
+      return wandboxResult;
+    }
+  }
+
+  // 2. Fall back to Piston execution engine
+  return executeWithPiston(targetLang, sourceCode);
+}
+
+// Alias for modern syntax
+export const executeCode = executeCodeWithPiston;

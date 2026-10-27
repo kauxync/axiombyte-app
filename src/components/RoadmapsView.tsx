@@ -11,12 +11,14 @@ import {
   TextInput,
   NativeSyntheticEvent,
   NativeScrollEvent,
+  Animated,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Fonts } from '@/constants/theme';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAppTheme } from '@/context/ThemeContext';
 import { AppTab } from './BottomNavBar';
+import { useAuth } from '@/context/AuthContext';
 import { useCurriculum } from '@/context/CurriculumContext';
 import {
   LanguageRoadmap,
@@ -48,10 +50,80 @@ export function isIconUrl(icon?: string): boolean {
   );
 }
 
+function AnimatedCard({
+  children,
+  onPress,
+  style,
+  index = 0,
+}: {
+  children: React.ReactNode;
+  onPress?: () => void;
+  style?: any;
+  index?: number;
+}) {
+  const [scaleAnim] = useState(() => new Animated.Value(1));
+  const [fadeAnim] = useState(() => new Animated.Value(0));
+  const [translateYAnim] = useState(() => new Animated.Value(16));
+
+  useEffect(() => {
+    Animated.parallel([
+      Animated.timing(fadeAnim, {
+        toValue: 1,
+        duration: 260,
+        delay: Math.min(index * 35, 240),
+        useNativeDriver: true,
+      }),
+      Animated.spring(translateYAnim, {
+        toValue: 0,
+        friction: 8,
+        tension: 45,
+        delay: Math.min(index * 35, 240),
+        useNativeDriver: true,
+      }),
+    ]).start();
+  }, [fadeAnim, translateYAnim, index]);
+
+  const handlePressIn = () => {
+    Animated.spring(scaleAnim, {
+      toValue: 0.98,
+      friction: 8,
+      useNativeDriver: true,
+    }).start();
+  };
+
+  const handlePressOut = () => {
+    Animated.spring(scaleAnim, {
+      toValue: 1,
+      friction: 6,
+      useNativeDriver: true,
+    }).start();
+  };
+
+  return (
+    <Animated.View
+      style={[
+        {
+          opacity: fadeAnim,
+          transform: [{ translateY: translateYAnim }, { scale: scaleAnim }],
+        },
+      ]}>
+      <Pressable
+        onPress={onPress}
+        onPressIn={handlePressIn}
+        onPressOut={handlePressOut}
+        style={style}>
+        {children}
+      </Pressable>
+    </Animated.View>
+  );
+}
+
 export function RoadmapsView({
   onNavigateTab,
   initialLanguageId,
   initialTopicId,
+  onGoBack,
+  canGoBack,
 }: {
   onNavigateTab?: (
     tab: AppTab,
@@ -65,9 +137,9 @@ export function RoadmapsView({
   const insets = useSafeAreaInsets();
   const { colors, isDark } = useAppTheme();
   const { languages, isLoading, isOffline, refreshCurriculum, refreshProgress } = useCurriculum();
+  const { recordStreakActivity } = useAuth();
 
   // Navigation State within Roadmaps
-  // null = Languages list; string = Language Chapters view; topicId = Topic Study Detail view
   const [selectedLanguageId, setSelectedLanguageId] = useState<string | null>(
     initialLanguageId || null
   );
@@ -75,6 +147,23 @@ export function RoadmapsView({
     initialTopicId || null
   );
   const [completedTopicIds, setCompletedTopicIds] = useState<string[]>([]);
+
+  // Adjust state during render if initial navigation props change (React 19 pattern)
+  const [prevInitialLanguageId, setPrevInitialLanguageId] = useState(initialLanguageId);
+  if (initialLanguageId !== prevInitialLanguageId) {
+    setPrevInitialLanguageId(initialLanguageId);
+    if (initialLanguageId) {
+      setSelectedLanguageId(initialLanguageId);
+    }
+  }
+
+  const [prevInitialTopicId, setPrevInitialTopicId] = useState(initialTopicId);
+  if (initialTopicId !== prevInitialTopicId) {
+    setPrevInitialTopicId(initialTopicId);
+    if (initialTopicId) {
+      setSelectedTopicId(initialTopicId);
+    }
+  }
 
   // Current selected entities
   const currentRoadmap = (languages || []).find((r) => r.id === selectedLanguageId);
@@ -144,12 +233,10 @@ export function RoadmapsView({
 
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
       if (selectedTopicId) {
-        // Return from Topic Study Detail to Language Chapters view
         setSelectedTopicId(null);
         return true;
       }
       if (selectedLanguageId) {
-        // Return from Language Chapters to Roadmaps List
         setSelectedLanguageId(null);
         return true;
       }
@@ -161,11 +248,15 @@ export function RoadmapsView({
         setSelectedFilter('all');
         return true;
       }
+      if (canGoBack && onGoBack) {
+        onGoBack();
+        return true;
+      }
       return false;
     });
 
     return () => sub.remove();
-  }, [selectedLanguageId, selectedTopicId, searchQuery, selectedFilter]);
+  }, [selectedLanguageId, selectedTopicId, searchQuery, selectedFilter, canGoBack, onGoBack]);
 
   // Filter counts
   const filterCounts = useMemo(() => {
@@ -186,20 +277,38 @@ export function RoadmapsView({
     };
   }, [languages, completedTopicIds]);
 
-  // Filtered roadmaps list
-  const filteredRoadmaps = useMemo(() => {
-    const list = languages || [];
-    return list.filter((rm) => {
+  // Overall curriculum stats for roadmaps
+  const overallRoadmapsStats = useMemo(() => {
+    let totalTopics = 0;
+    let completedTopics = 0;
+    let masteredLanguages = 0;
+    (languages || []).forEach((rm) => {
       const prog = calculateLanguageProgress(rm, completedTopicIds);
-      if (selectedFilter === 'in_progress' && (prog.completed === 0 || prog.isCompleted)) {
-        return false;
-      }
-      if (selectedFilter === 'completed' && !prog.isCompleted) {
-        return false;
-      }
-      if (selectedFilter === 'not_started' && prog.completed > 0) {
-        return false;
-      }
+      totalTopics += prog.total;
+      completedTopics += prog.completed;
+      if (prog.isCompleted) masteredLanguages++;
+    });
+    const percent = totalTopics > 0 ? Math.round((completedTopics / totalTopics) * 100) : 0;
+    return {
+      totalLanguages: (languages || []).length,
+      totalTopics,
+      completedTopics,
+      masteredLanguages,
+      percent,
+    };
+  }, [languages, completedTopicIds]);
+
+  // Filtered roadmaps
+  const filteredRoadmaps = useMemo(() => {
+    return (languages || []).filter((rm) => {
+      const prog = calculateLanguageProgress(rm, completedTopicIds);
+      const isCompleted = prog.isCompleted;
+      const inProgress = prog.completed > 0 && !isCompleted;
+      const notStarted = prog.completed === 0;
+
+      if (selectedFilter === 'in_progress' && !inProgress) return false;
+      if (selectedFilter === 'completed' && !isCompleted) return false;
+      if (selectedFilter === 'not_started' && !notStarted) return false;
 
       if (!searchQuery.trim()) return true;
       const q = searchQuery.toLowerCase().trim();
@@ -212,8 +321,8 @@ export function RoadmapsView({
         return true;
       }
 
-      const topics = getAllTopics(rm);
-      return topics.some(
+      const allTopics = getAllTopics(rm);
+      return allTopics.some(
         (t) =>
           t.title.toLowerCase().includes(q) ||
           (t.tag && t.tag.toLowerCase().includes(q)) ||
@@ -265,8 +374,9 @@ export function RoadmapsView({
     if (newlyCompleted) {
       setCompletedTopicIds(updated);
       refreshProgress().catch(() => {});
+      recordStreakActivity().catch(() => {});
     }
-  }, [refreshProgress]);
+  }, [refreshProgress, recordStreakActivity]);
 
   const handleTopicScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
     const { layoutMeasurement, contentOffset, contentSize } = event.nativeEvent;
@@ -291,19 +401,21 @@ export function RoadmapsView({
   };
 
   const handleNavigateNextTopic = async (nextId: string) => {
-    // Only mark the current topic that was just read
     const readTopicId = selectedTopicId;
     if (readTopicId) {
       await handleAutoMarkComplete(readTopicId);
     }
-    // Switch to next topic (which is unread)
     setSelectedTopicId(nextId);
   };
 
   const handleToggleComplete = async (topicId: string) => {
+    const wasCompleted = completedTopicIds.includes(topicId);
     const updated = await toggleLessonCompletion(topicId);
     setCompletedTopicIds(updated);
     refreshProgress().catch(() => {});
+    if (!wasCompleted) {
+      recordStreakActivity().catch(() => {});
+    }
   };
 
   // -------------------------------------------------------------
@@ -325,7 +437,7 @@ export function RoadmapsView({
             styles.detailHeader,
             {
               paddingTop: Math.max(insets.top, 16),
-              borderBottomColor: colors.border,
+              borderBottomColor: colors.borderSubtle,
               backgroundColor: colors.card,
             },
           ]}>
@@ -335,9 +447,10 @@ export function RoadmapsView({
               styles.backBtnPill,
               { backgroundColor: colors.cardSecondary, borderColor: colors.border },
               pressed && { opacity: 0.7 },
-            ]}>
-            <Ionicons name="chevron-back" size={17} color={colors.text} />
-            <Text style={[styles.backBtnText, { color: colors.text }]}>Back</Text>
+            ]}
+            hitSlop={8}>
+            <Ionicons name="arrow-back" size={16} color={colors.text} />
+            <Text style={[styles.backBtnText, { color: colors.text }]}>Chapters</Text>
           </Pressable>
 
           {/* Mark as Completed Action Header Button */}
@@ -378,7 +491,8 @@ export function RoadmapsView({
           {/* Chapter Breadcrumb & Tag */}
           {currentChapter && (
             <View style={styles.topicBreadcrumbRow}>
-              <View style={[styles.chapterPill, { backgroundColor: `${currentRoadmap.color}18` }]}>
+              <View style={[styles.chapterPill, { backgroundColor: `${currentRoadmap.color}18`, borderColor: `${currentRoadmap.color}35`, borderWidth: 0.5 }]}>
+                <Ionicons name="bookmark-outline" size={11} color={currentRoadmap.color} style={{ marginRight: 4 }} />
                 <Text style={[styles.chapterPillText, { color: currentRoadmap.color }]}>
                   {currentChapter.title.toUpperCase()}
                 </Text>
@@ -394,7 +508,7 @@ export function RoadmapsView({
             <View style={styles.topicLoadingContainer}>
               <ActivityIndicator size="large" color={currentRoadmap.color} />
               <Text style={[styles.topicLoadingText, { color: colors.textMuted }]}>
-                Loading topic materials...
+                Loading syntax notes & architectural deep-dive...
               </Text>
             </View>
           ) : (
@@ -411,12 +525,13 @@ export function RoadmapsView({
             {prevTopic ? (
               <Pressable
                 onPress={() => setSelectedTopicId(prevTopic.id)}
-                style={[
+                style={({ pressed }) => [
                   styles.navPageBtn,
                   { backgroundColor: colors.card, borderColor: colors.border },
+                  pressed && { opacity: 0.75, transform: [{ scale: 0.99 }] },
                 ]}>
                 <Ionicons name="arrow-back" size={14} color={colors.primary} />
-                <View style={{ flex: 1 }}>
+                <View style={{ flex: 1, marginLeft: 8 }}>
                   <Text style={[styles.navPageSub, { color: colors.textMuted }]}>PREVIOUS</Text>
                   <Text style={[styles.navPageTitle, { color: colors.text }]} numberOfLines={1}>
                     {prevTopic.title}
@@ -430,12 +545,13 @@ export function RoadmapsView({
             {nextTopic ? (
               <Pressable
                 onPress={() => handleNavigateNextTopic(nextTopic.id)}
-                style={[
+                style={({ pressed }) => [
                   styles.navPageBtn,
                   { backgroundColor: colors.card, borderColor: colors.border },
+                  pressed && { opacity: 0.75, transform: [{ scale: 0.99 }] },
                 ]}>
-                <View style={{ flex: 1, alignItems: 'flex-end' }}>
-                  <Text style={[styles.navPageSub, { color: colors.textMuted }]}>NEXT TOPIC</Text>
+                <View style={{ flex: 1, marginRight: 8, alignItems: 'flex-end' }}>
+                  <Text style={[styles.navPageSub, { color: colors.textMuted }]}>NEXT LESSON</Text>
                   <Text style={[styles.navPageTitle, { color: colors.text }]} numberOfLines={1}>
                     {nextTopic.title}
                   </Text>
@@ -473,7 +589,7 @@ export function RoadmapsView({
             styles.detailHeader,
             {
               paddingTop: Math.max(insets.top, 16),
-              borderBottomColor: colors.border,
+              borderBottomColor: colors.borderSubtle,
               backgroundColor: colors.card,
             },
           ]}>
@@ -483,10 +599,17 @@ export function RoadmapsView({
               styles.backBtnPill,
               { backgroundColor: colors.cardSecondary, borderColor: colors.border },
               pressed && { opacity: 0.7 },
-            ]}>
-            <Ionicons name="chevron-back" size={17} color={colors.text} />
+            ]}
+            hitSlop={8}>
+            <Ionicons name="arrow-back" size={16} color={colors.text} />
             <Text style={[styles.backBtnText, { color: colors.text }]}>Roadmaps</Text>
           </Pressable>
+
+          <View style={[styles.headerCodePill, { backgroundColor: `${currentRoadmap.color}16`, borderColor: `${currentRoadmap.color}35` }]}>
+            <Text style={[styles.headerCodePillText, { color: currentRoadmap.color }]}>
+              {currentRoadmap.badge}
+            </Text>
+          </View>
         </View>
 
         <ScrollView
@@ -496,62 +619,84 @@ export function RoadmapsView({
             { paddingBottom: Math.max(insets.bottom, 24) + 80 },
           ]}
           showsVerticalScrollIndicator={false}>
-          {/* Track Hero Banner */}
+          {/* Track Hero Banner Card */}
           <View
             style={[
               styles.trackBanner,
               { backgroundColor: colors.card, borderColor: colors.border },
             ]}>
-            <View style={styles.bannerTagRow}>
-              <View style={styles.bannerTagLeft}>
-                <View
-                  style={[
-                    styles.bannerIconBox,
-                    {
-                      backgroundColor: `${currentRoadmap.color}18`,
-                      borderColor: `${currentRoadmap.color}40`,
-                    },
-                  ]}>
-                  {isIconUrl(currentRoadmap.icon) ? (
-                    <Image
-                      source={{ uri: currentRoadmap.icon }}
-                      style={{ width: 18, height: 18 }}
-                      resizeMode="contain"
-                    />
-                  ) : (
-                    <Ionicons
-                      name={currentRoadmap.icon as any}
-                      size={16}
-                      color={currentRoadmap.color}
-                    />
-                  )}
-                </View>
-                <View style={[styles.bannerBadge, { backgroundColor: `${currentRoadmap.color}18` }]}>
-                  <Text style={[styles.bannerBadgeText, { color: currentRoadmap.color }]}>
-                    {currentRoadmap.badge}
-                  </Text>
+            <View style={[styles.cardAccentLine, { backgroundColor: currentRoadmap.color }]} />
+
+            <View style={styles.trackBannerBody}>
+              <View style={styles.bannerTagRow}>
+                <View style={styles.bannerTagLeft}>
+                  <View
+                    style={[
+                      styles.bannerIconBox,
+                      {
+                        backgroundColor: `${currentRoadmap.color}18`,
+                        borderColor: `${currentRoadmap.color}40`,
+                      },
+                    ]}>
+                    {isIconUrl(currentRoadmap.icon) ? (
+                      <Image
+                        source={{ uri: currentRoadmap.icon }}
+                        style={{ width: 22, height: 22 }}
+                        resizeMode="contain"
+                      />
+                    ) : (
+                      <Ionicons
+                        name={currentRoadmap.icon as any}
+                        size={20}
+                        color={currentRoadmap.color}
+                      />
+                    )}
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={[styles.trackName, { color: colors.text }]}>{currentRoadmap.name}</Text>
+                    <View style={styles.heroSubMetaRow}>
+                      <View style={[styles.bannerBadge, { backgroundColor: `${currentRoadmap.color}18`, borderColor: `${currentRoadmap.color}30`, borderWidth: 0.5 }]}>
+                        <Text style={[styles.bannerBadgeText, { color: currentRoadmap.color }]}>
+                          {currentRoadmap.badge}
+                        </Text>
+                      </View>
+                      <Text style={[styles.lessonCountText, { color: colors.textMuted }]}>
+                        • {trackProgress.completed}/{trackProgress.total} completed
+                      </Text>
+                    </View>
+                  </View>
                 </View>
               </View>
-              <Text style={[styles.lessonCountText, { color: colors.textMuted }]}>
-                {trackProgress.completed}/{trackProgress.total} TOPICS COMPLETED ({trackProgress.percent}%)
+
+              <Text style={[styles.trackDesc, { color: colors.textSecondary }]}>
+                {currentRoadmap.description}
               </Text>
-            </View>
 
-            <Text style={[styles.trackName, { color: colors.text }]}>{currentRoadmap.name}</Text>
-            <Text style={[styles.trackDesc, { color: colors.textSecondary }]}>
-              {currentRoadmap.description}
-            </Text>
+              {/* Progress Bar & Stats */}
+              <View style={[styles.progressBarBg, { backgroundColor: colors.cardSecondary }]}>
+                <View
+                  style={[
+                    styles.progressBarFill,
+                    { width: `${trackProgress.percent}%`, backgroundColor: currentRoadmap.color },
+                  ]}
+                />
+              </View>
 
-            {/* Progress Bar */}
-            <View style={[styles.progressBarBg, { backgroundColor: colors.cardSecondary }]}>
-              <View
-                style={[
-                  styles.progressBarFill,
-                  { width: `${trackProgress.percent}%`, backgroundColor: currentRoadmap.color },
-                ]}
-              />
+              <View style={styles.trackStatsRow}>
+                <Text style={[styles.trackStatsText, { color: colors.textMuted }]}>
+                  Mastery Progress
+                </Text>
+                <Text style={[styles.trackPercentText, { color: currentRoadmap.color }]}>
+                  {trackProgress.percent}%
+                </Text>
+              </View>
             </View>
           </View>
+
+          {/* Section Heading: Chapters */}
+          <Text style={[styles.sectionHeading, { color: colors.textMuted, marginTop: 18, marginBottom: 12 }]}>
+            CURRICULUM CHECKPOINTS ({chapters.length})
+          </Text>
 
           {/* Chapters and Subtopics */}
           <View style={styles.chaptersList}>
@@ -561,8 +706,9 @@ export function RoadmapsView({
               const isChapterDone = chapterTopics.length > 0 && chapterCompleted === chapterTopics.length;
 
               return (
-                <View
+                <AnimatedCard
                   key={chapter.id}
+                  index={chIdx}
                   style={[
                     styles.chapterCard,
                     { backgroundColor: colors.card, borderColor: colors.border },
@@ -570,17 +716,15 @@ export function RoadmapsView({
                   {/* Chapter Header */}
                   <View style={styles.chapterHeader}>
                     <View style={[styles.chapterNumberBadge, { backgroundColor: colors.cardSecondary }]}>
-                      <Text style={[styles.chapterNumberText, { color: colors.primary }]}>
-                        0{chIdx + 1}
+                      <Text style={[styles.chapterNumberText, { color: currentRoadmap.color }]}>
+                        {String(chIdx + 1).padStart(2, '0')}
                       </Text>
                     </View>
-                    <View style={{ flex: 1, marginRight: 8 }}>
+                    <View style={{ flex: 1, gap: 2 }}>
                       <Text style={[styles.chapterTitle, { color: colors.text }]}>{chapter.title}</Text>
-                      {chapter.description ? (
-                        <Text style={[styles.chapterSubDesc, { color: colors.textMuted }]} numberOfLines={1}>
-                          {chapter.description}
-                        </Text>
-                      ) : null}
+                      <Text style={[styles.chapterSubDesc, { color: colors.textMuted }]} numberOfLines={1}>
+                        {chapterTopics.length} {chapterTopics.length === 1 ? 'lesson' : 'lessons'} • Chapter {chIdx + 1}
+                      </Text>
                     </View>
                     <View
                       style={[
@@ -596,14 +740,16 @@ export function RoadmapsView({
                           styles.chapterBadgePillText,
                           { color: isChapterDone ? '#10B981' : colors.textMuted },
                         ]}>
-                        {chapterCompleted}/{chapterTopics.length}
+                        {isChapterDone
+                          ? 'COMPLETE'
+                          : `${chapterCompleted}/${chapterTopics.length}`}
                       </Text>
                     </View>
                   </View>
 
                   {/* Subtopics List */}
                   <View style={styles.subtopicsContainer}>
-                    {chapterTopics.map((topic, tpIdx) => {
+                    {chapterTopics.map((topic) => {
                       const isTopicDone = isLessonCompleted(topic.id, completedTopicIds);
 
                       return (
@@ -612,21 +758,32 @@ export function RoadmapsView({
                           onPress={() => setSelectedTopicId(topic.id)}
                           style={({ pressed }) => [
                             styles.subtopicRow,
-                            { borderBottomColor: colors.borderSubtle },
-                            tpIdx === chapterTopics.length - 1 && { borderBottomWidth: 0 },
-                            pressed && { backgroundColor: colors.cardSecondary },
+                            {
+                              backgroundColor: pressed
+                                ? colors.cardSecondary
+                                : 'transparent',
+                              borderTopColor: colors.borderSubtle,
+                            },
                           ]}>
                           {/* Completion Indicator */}
                           <View style={styles.subtopicLeft}>
                             <Pressable
                               onPress={() => handleToggleComplete(topic.id)}
-                              hitSlop={8}
-                              style={styles.topicCheckTrigger}>
-                              <Ionicons
-                                name={isTopicDone ? 'checkmark-circle' : 'ellipse-outline'}
-                                size={20}
-                                color={isTopicDone ? '#10B981' : colors.textMuted}
-                              />
+                              hitSlop={10}
+                              style={[
+                                styles.subtopicCheckBtn,
+                                {
+                                  backgroundColor: isTopicDone
+                                    ? '#10B981'
+                                    : colors.cardSecondary,
+                                  borderColor: isTopicDone
+                                    ? '#10B981'
+                                    : colors.border,
+                                },
+                              ]}>
+                              {isTopicDone && (
+                                <Ionicons name="checkmark" size={12} color="#FFFFFF" />
+                              )}
                             </Pressable>
 
                             <View style={{ flex: 1 }}>
@@ -635,7 +792,8 @@ export function RoadmapsView({
                                   styles.subtopicTitle,
                                   { color: colors.text },
                                   isTopicDone && { color: colors.textSecondary },
-                                ]}>
+                                ]}
+                                numberOfLines={1}>
                                 {topic.title}
                               </Text>
                               {topic.tag ? (
@@ -649,13 +807,13 @@ export function RoadmapsView({
                           </View>
 
                           <View style={styles.subtopicChevronCol}>
-                            <Ionicons name="chevron-forward" size={17} color={colors.textMuted} />
+                            <Ionicons name="chevron-forward" size={16} color={colors.textMuted} />
                           </View>
                         </Pressable>
                       );
                     })}
                   </View>
-                </View>
+                </AnimatedCard>
               );
             })}
           </View>
@@ -669,35 +827,104 @@ export function RoadmapsView({
   // -------------------------------------------------------------
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
-      {/* Top Header: icon with text Roadmaps & tagline */}
+      {/* Top Header */}
       <View
         style={[
           styles.header,
           {
             paddingTop: Math.max(insets.top, 16),
-            borderBottomColor: colors.border,
+            borderBottomColor: colors.borderSubtle,
             backgroundColor: colors.card,
           },
         ]}>
         <View style={styles.headerTitleRow}>
-          <View style={[styles.iconBadge, { backgroundColor: colors.primaryBg }]}>
-            <Ionicons name="map" size={21} color={colors.primary} />
-          </View>
           <View style={{ flex: 1 }}>
-            <Text style={[styles.headerTitle, { color: colors.text }]}>Roadmaps</Text>
-            <Text style={[styles.headerSub, { color: colors.textSecondary }]}>
-              Structured learning tracks to master computer science & systems engineering
+            <Text style={[styles.headerTitle, { color: colors.text }]}>Engineering Roadmaps</Text>
+            <Text style={[styles.headerSub, { color: colors.textSecondary }]} numberOfLines={1}>
+              Structured systems, language syntax & architecture tracks
             </Text>
           </View>
+
+          {isOffline && (
+            <View style={[styles.headerOfflinePill, { backgroundColor: colors.cardSecondary, borderColor: colors.borderSubtle }]}>
+              <Ionicons name="cloud-offline" size={12} color={colors.textMuted} />
+              <Text style={[styles.headerOfflineText, { color: colors.textMuted }]}>Offline</Text>
+            </View>
+          )}
         </View>
       </View>
 
       <ScrollView
         contentContainerStyle={[
           styles.scrollContent,
-          { paddingBottom: Math.max(insets.bottom, 24) + 80 },
+          { paddingBottom: Math.max(insets.bottom, 24) + 84 },
         ]}
         showsVerticalScrollIndicator={false}>
+        {/* Scholar Developer Mastery Deck Card */}
+        <View
+          style={[
+            styles.overviewStatsCard,
+            {
+              backgroundColor: colors.card,
+              borderColor: isDark ? 'rgba(56, 189, 248, 0.35)' : colors.border,
+            },
+          ]}>
+          <View style={[styles.cardAccentLine, { backgroundColor: colors.primary }]} />
+
+          <View style={styles.overviewCardInner}>
+            <View style={styles.overviewTopRow}>
+              <View style={styles.overviewTagBadge}>
+                <Ionicons name="code-slash" size={13} color={colors.primary} />
+                <Text style={[styles.overviewTagText, { color: colors.primary }]}>DEVELOPER SYNTAX & SYSTEMS</Text>
+              </View>
+
+              <View style={[styles.masteryPill, { backgroundColor: 'rgba(56, 189, 248, 0.14)' }]}>
+                <Text style={[styles.masteryPillText, { color: colors.primary }]}>
+                  {overallRoadmapsStats.percent}% MASTERED
+                </Text>
+              </View>
+            </View>
+
+            {/* Micro Progress Track */}
+            <View style={[styles.overviewTrackBg, { backgroundColor: colors.cardSecondary }]}>
+              <View
+                style={[
+                  styles.overviewTrackFill,
+                  { width: `${overallRoadmapsStats.percent}%`, backgroundColor: colors.primary },
+                ]}
+              />
+            </View>
+
+            {/* 3 Metrics Capsule Row */}
+            <View style={[styles.metricsCapsuleRow, { backgroundColor: colors.cardSecondary, borderColor: colors.borderSubtle }]}>
+              <View style={styles.metricColumn}>
+                <Text style={[styles.metricBigNumber, { color: colors.text }]}>
+                  {overallRoadmapsStats.totalLanguages}
+                </Text>
+                <Text style={[styles.metricLabel, { color: colors.textMuted }]}>Tracks</Text>
+              </View>
+
+              <View style={[styles.metricDivider, { backgroundColor: colors.borderSubtle }]} />
+
+              <View style={styles.metricColumn}>
+                <Text style={[styles.metricBigNumber, { color: '#10B981' }]}>
+                  {overallRoadmapsStats.completedTopics}/{overallRoadmapsStats.totalTopics}
+                </Text>
+                <Text style={[styles.metricLabel, { color: colors.textMuted }]}>Lessons Done</Text>
+              </View>
+
+              <View style={[styles.metricDivider, { backgroundColor: colors.borderSubtle }]} />
+
+              <View style={styles.metricColumn}>
+                <Text style={[styles.metricBigNumber, { color: '#F59E0B' }]}>
+                  {overallRoadmapsStats.masteredLanguages}
+                </Text>
+                <Text style={[styles.metricLabel, { color: colors.textMuted }]}>Completed</Text>
+              </View>
+            </View>
+          </View>
+        </View>
+
         {/* Search Input Bar */}
         <View
           style={[
@@ -707,10 +934,10 @@ export function RoadmapsView({
               borderColor: colors.border,
             },
           ]}>
-          <Ionicons name="search" size={17} color={colors.textMuted} />
+          <Ionicons name="search" size={16} color={colors.textMuted} />
           <TextInput
             style={[styles.searchInput, { color: colors.text }]}
-            placeholder="Search languages, topics, concepts..."
+            placeholder="Search languages, syntax, systems..."
             placeholderTextColor={colors.textMuted}
             value={searchQuery}
             onChangeText={setSearchQuery}
@@ -723,7 +950,7 @@ export function RoadmapsView({
           ) : null}
         </View>
 
-        {/* Filter Pills */}
+        {/* Filter Pills with DemiBold typography */}
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
@@ -817,7 +1044,7 @@ export function RoadmapsView({
                         backgroundColor: colors.card,
                         borderColor: colors.border,
                       },
-                      pressed && { opacity: 0.85, borderColor: language.color },
+                      pressed && { opacity: 0.85, borderColor: language.color, transform: [{ scale: 0.99 }] },
                     ]}>
                     <View style={styles.matchingTopicLeft}>
                       <View
@@ -830,7 +1057,7 @@ export function RoadmapsView({
                           },
                         ]}>
                         <Ionicons
-                          name={isDone ? 'checkmark-circle' : 'document-text-outline'}
+                          name={isDone ? 'checkmark-circle' : 'code-slash-outline'}
                           size={17}
                           color={isDone ? '#10B981' : language.color}
                         />
@@ -855,11 +1082,6 @@ export function RoadmapsView({
                               {language.name}
                             </Text>
                           </View>
-                          <Text
-                            style={[styles.matchingTopicChapter, { color: colors.textMuted }]}
-                            numberOfLines={1}>
-                            • {chapterTitle}
-                          </Text>
                         </View>
                       </View>
                     </View>
@@ -874,17 +1096,11 @@ export function RoadmapsView({
         {/* Section Header */}
         <View style={styles.sectionHeaderRow}>
           <Text style={[styles.sectionHeading, { color: colors.textMuted }]}>
-            PROGRAMMING LANGUAGES ({filteredRoadmaps.length})
+            PROGRAMMING TRACKS ({filteredRoadmaps.length})
           </Text>
-          {isOffline && (
-            <View style={[styles.offlinePill, { backgroundColor: colors.cardSecondary }]}>
-              <Ionicons name="cloud-offline-outline" size={12} color={colors.textMuted} />
-              <Text style={[styles.offlinePillText, { color: colors.textMuted }]}>Cached</Text>
-            </View>
-          )}
         </View>
 
-        {/* Loading Spinner if API fetch is in progress and cache is empty */}
+        {/* Loading Spinner */}
         {isLoading && (!languages || languages.length === 0) ? (
           <View style={styles.loadingContainer}>
             <ActivityIndicator size="large" color={colors.primary} />
@@ -923,13 +1139,13 @@ export function RoadmapsView({
               { backgroundColor: colors.card, borderColor: colors.border },
             ]}>
             <View style={[styles.emptyFilterIconWrap, { backgroundColor: colors.cardSecondary }]}>
-              <Ionicons name="search-outline" size={28} color={colors.textMuted} />
+              <Ionicons name="search-outline" size={26} color={colors.textMuted} />
             </View>
             <Text style={[styles.emptyFilterTitle, { color: colors.text }]}>No matching tracks</Text>
             <Text style={[styles.emptyFilterSub, { color: colors.textSecondary }]}>
               {searchQuery
                 ? `We couldn't find any language tracks or topics matching "${searchQuery}".`
-                : 'No programming roadmaps match the selected filter.'}
+                : 'No programming roadmaps match the selected filter category.'}
             </Text>
             <Pressable
               onPress={() => {
@@ -942,127 +1158,136 @@ export function RoadmapsView({
                 pressed && { opacity: 0.85 },
               ]}>
               <Ionicons name="refresh" size={14} color="#0F172A" />
-              <Text style={styles.clearFilterBtnText}>Reset Filters</Text>
+              <Text style={styles.clearFilterBtnText}>Reset Filter</Text>
             </Pressable>
           </View>
         ) : null}
 
         {/* List of Programming Languages Cards */}
         <View style={styles.languageList}>
-          {filteredRoadmaps.map((rm) => {
+          {filteredRoadmaps.map((rm, idx) => {
             const progress = calculateLanguageProgress(rm, completedTopicIds);
             const chaptersCount = rm.chapters ? rm.chapters.length : 1;
+            const isCompleted = progress.isCompleted;
+            const isStarted = progress.completed > 0 && !isCompleted;
 
             return (
-              <Pressable
+              <AnimatedCard
                 key={rm.id}
+                index={idx}
                 onPress={() => setSelectedLanguageId(rm.id)}
-                style={({ pressed }) => [
+                style={[
                   styles.languageCard,
                   {
                     backgroundColor: colors.card,
-                    borderColor: progress.isCompleted
+                    borderColor: isCompleted
                       ? 'rgba(16, 185, 129, 0.45)'
                       : colors.border,
                   },
-                  pressed && { opacity: 0.9, transform: [{ scale: 0.99 }] },
                 ]}>
-                {/* Language Card Top Row */}
-                <View style={styles.cardTopRow}>
-                  {/* Language Icon Badge */}
-                  <View
-                    style={[
-                      styles.langIconBox,
-                      {
-                        backgroundColor: `${rm.color}18`,
-                        borderColor: `${rm.color}40`,
-                      },
-                    ]}>
-                    {isIconUrl(rm.icon) ? (
-                      <Image
-                        source={{ uri: rm.icon }}
-                        style={{ width: 28, height: 28 }}
-                        resizeMode="contain"
-                      />
-                    ) : (
-                      <Ionicons name={rm.icon as any} size={24} color={rm.color} />
-                    )}
-                  </View>
+                {/* Brand Color Top Accent Line */}
+                <View style={[styles.cardAccentLine, { backgroundColor: rm.color }]} />
 
-                  {/* Language Name & Badges */}
-                  <View style={{ flex: 1 }}>
-                    <View style={styles.nameBadgeRow}>
-                      <Text style={[styles.languageName, { color: colors.text }]}>{rm.name}</Text>
-                      <View style={[styles.badgePill, { backgroundColor: `${rm.color}18` }]}>
-                        <Text style={[styles.badgePillText, { color: rm.color }]}>{rm.badge}</Text>
-                      </View>
-                    </View>
-                    <Text style={[styles.languageDesc, { color: colors.textSecondary }]}>
-                      {rm.description}
-                    </Text>
-                  </View>
-
-                  <View style={styles.chevronWrap}>
-                    <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
-                  </View>
-                </View>
-
-                {/* Progress Bar & Footer */}
-                <View style={[styles.cardDivider, { backgroundColor: colors.borderSubtle }]} />
-
-                <View style={styles.cardFooter}>
-                  <View style={{ flex: 1, marginRight: 12 }}>
-                    <View style={styles.footerMetaRow}>
-                      <Text style={[styles.progressCountText, { color: colors.textMuted }]}>
-                        {chaptersCount} {chaptersCount === 1 ? 'Chapter' : 'Chapters'} • {progress.completed}/{progress.total} Topics
-                      </Text>
-                      <Text style={[styles.progressPercentText, { color: rm.color }]}>
-                        {progress.percent}%
-                      </Text>
-                    </View>
-
-                    <View style={[styles.cardProgressBarBg, { backgroundColor: colors.cardSecondary }]}>
-                      <View
-                        style={[
-                          styles.cardProgressBarFill,
-                          { width: `${progress.percent}%`, backgroundColor: rm.color },
-                        ]}
-                      />
-                    </View>
-                  </View>
-
-                  {/* Status Tag Pill */}
-                  <View
-                    style={[
-                      styles.statusPill,
-                      {
-                        backgroundColor: progress.isCompleted
-                          ? 'rgba(16, 185, 129, 0.14)'
-                          : progress.percent > 0
-                          ? 'rgba(56, 189, 248, 0.12)'
-                          : colors.cardSecondary,
-                      },
-                    ]}>
-                    <Text
+                <View style={styles.cardInnerPadding}>
+                  {/* Language Card Top Row */}
+                  <View style={styles.cardTopRow}>
+                    <View
                       style={[
-                        styles.statusPillText,
+                        styles.langIconBox,
                         {
-                          color: progress.isCompleted
-                            ? '#10B981'
-                            : progress.percent > 0
-                            ? colors.primary
-                            : colors.textMuted,
+                          backgroundColor: `${rm.color}1E`,
+                          borderColor: `${rm.color}35`,
                         },
                       ]}>
-                      {progress.isCompleted
-                        ? 'COMPLETED'
-                        : progress.percent > 0
-                        ? 'IN PROGRESS'
-                        : 'START TRACK'}
+                      {isIconUrl(rm.icon) ? (
+                        <Image
+                          source={{ uri: rm.icon }}
+                          style={{ width: 26, height: 26 }}
+                          resizeMode="contain"
+                        />
+                      ) : (
+                        <Ionicons name={rm.icon as any} size={22} color={rm.color} />
+                      )}
+                    </View>
+
+                    <View style={{ flex: 1 }}>
+                      <View style={styles.nameBadgeRow}>
+                        <Text style={[styles.languageName, { color: colors.text }]}>{rm.name}</Text>
+                        <View style={[styles.badgePill, { backgroundColor: `${rm.color}16`, borderColor: `${rm.color}30`, borderWidth: 0.5 }]}>
+                          <Text style={[styles.badgePillText, { color: rm.color }]}>{rm.badge}</Text>
+                        </View>
+                      </View>
+                      <Text style={[styles.languageDesc, { color: colors.textSecondary }]} numberOfLines={2}>
+                        {rm.description}
+                      </Text>
+                    </View>
+
+                    <View
+                      style={[
+                        styles.statusPill,
+                        isCompleted
+                          ? {
+                              backgroundColor: 'rgba(16, 185, 129, 0.14)',
+                              borderColor: '#10B981',
+                            }
+                          : isStarted
+                          ? {
+                              backgroundColor: `${rm.color}16`,
+                              borderColor: `${rm.color}40`,
+                            }
+                          : {
+                              backgroundColor: colors.cardSecondary,
+                              borderColor: colors.borderSubtle,
+                            },
+                      ]}>
+                      <Text
+                        style={[
+                          styles.statusPillText,
+                          {
+                            color: isCompleted
+                              ? '#10B981'
+                              : isStarted
+                              ? rm.color
+                              : colors.textMuted,
+                          },
+                        ]}>
+                        {isCompleted ? 'COMPLETED' : isStarted ? 'IN PROGRESS' : 'NOT STARTED'}
+                      </Text>
+                    </View>
+                  </View>
+
+                  {/* Progress Bar */}
+                  <View style={[styles.cardProgressBarBg, { backgroundColor: colors.cardSecondary }]}>
+                    <View
+                      style={[
+                        styles.cardProgressBarFill,
+                        { width: `${progress.percent}%`, backgroundColor: isCompleted ? '#10B981' : rm.color },
+                      ]}
+                    />
+                  </View>
+
+                  {/* Card Footer */}
+                  <View style={styles.cardFooter}>
+                    <Text style={[styles.progressCountText, { color: colors.textMuted }]}>
+                      {chaptersCount} {chaptersCount === 1 ? 'Chapter' : 'Chapters'} • {progress.completed}/{progress.total} topics
                     </Text>
+
+                    <View style={styles.ctaPillWrap}>
+                      <Text
+                        style={[
+                          styles.ctaPillText,
+                          { color: isCompleted ? '#10B981' : rm.color },
+                        ]}>
+                        {isCompleted
+                          ? 'Review Track ➔'
+                          : isStarted
+                          ? 'Resume ➔'
+                          : 'Explore ➔'}
+                      </Text>
+                    </View>
                   </View>
                 </View>
-              </Pressable>
+              </AnimatedCard>
             );
           })}
         </View>
@@ -1071,13 +1296,16 @@ export function RoadmapsView({
   );
 }
 
+// -------------------------------------------------------------
+// STYLES
+// -------------------------------------------------------------
 const styles = StyleSheet.create({
   container: {
     flex: 1,
   },
   header: {
     paddingHorizontal: 20,
-    paddingBottom: 16,
+    paddingBottom: 14,
     borderBottomWidth: 1,
   },
   headerTitleRow: {
@@ -1085,27 +1313,49 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 12,
   },
+  headerBackBtn: {
+    width: 38,
+    height: 38,
+    borderRadius: 12,
+    borderWidth: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
   iconBadge: {
-    width: 42,
-    height: 42,
-    borderRadius: 13,
+    width: 38,
+    height: 38,
+    borderRadius: 12,
+    borderWidth: 1,
     justifyContent: 'center',
     alignItems: 'center',
   },
   headerTitle: {
     fontFamily: Fonts.heading,
-    fontSize: 23,
+    fontSize: 21,
     fontWeight: '800',
     letterSpacing: -0.4,
   },
   headerSub: {
     fontFamily: Fonts.body,
-    fontSize: 13,
+    fontSize: 12.5,
     marginTop: 2,
-    lineHeight: 18,
+  },
+  headerOfflinePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  headerOfflineText: {
+    fontFamily: Fonts.mono,
+    fontSize: 10,
+    fontWeight: '700',
   },
   scrollContent: {
-    paddingHorizontal: 18,
+    paddingHorizontal: 16,
     paddingTop: 16,
   },
 
@@ -1143,9 +1393,9 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   filterChipText: {
-    fontFamily: Fonts.body,
-    fontSize: 12.5,
-    fontWeight: '600',
+    fontFamily: Fonts.headingDemiBold,
+    fontSize: 12,
+    letterSpacing: 0.3,
   },
   filterChipCountBadge: {
     paddingHorizontal: 6,
@@ -1154,8 +1404,9 @@ const styles = StyleSheet.create({
   },
   filterChipCountText: {
     fontFamily: Fonts.mono,
-    fontSize: 11,
+    fontSize: 10.5,
     fontWeight: '700',
+    fontVariant: ['tabular-nums'],
   },
 
   // Matching Topics (Search results)
@@ -1175,7 +1426,7 @@ const styles = StyleSheet.create({
   },
   matchingTopicsHeading: {
     fontFamily: Fonts.heading,
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '700',
   },
   matchingCountBadge: {
@@ -1196,9 +1447,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     borderWidth: 1,
-    borderRadius: 12,
+    borderRadius: 14,
     paddingHorizontal: 12,
-    paddingVertical: 10,
+    paddingVertical: 11,
     gap: 10,
   },
   matchingTopicLeft: {
@@ -1250,21 +1501,21 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingVertical: 36,
     paddingHorizontal: 20,
-    borderRadius: 16,
+    borderRadius: 18,
     borderWidth: 1,
     marginBottom: 20,
   },
   emptyFilterIconWrap: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
+    width: 52,
+    height: 52,
+    borderRadius: 16,
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 12,
   },
   emptyFilterTitle: {
     fontFamily: Fonts.heading,
-    fontSize: 17,
+    fontSize: 16.5,
     fontWeight: '700',
     marginBottom: 4,
   },
@@ -1281,24 +1532,12 @@ const styles = StyleSheet.create({
     gap: 6,
     paddingHorizontal: 16,
     paddingVertical: 9,
-    borderRadius: 20,
+    borderRadius: 12,
   },
   clearFilterBtnText: {
-    fontFamily: Fonts.body,
+    fontFamily: Fonts.headingMedium,
     fontSize: 13,
-    fontWeight: '700',
     color: '#0F172A',
-  },
-
-  progressBarBg: {
-    height: 8,
-    borderRadius: 4,
-    overflow: 'hidden',
-    marginTop: 4,
-  },
-  progressBarFill: {
-    height: '100%',
-    borderRadius: 4,
   },
 
   // Section Header
@@ -1307,26 +1546,90 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     marginBottom: 12,
-    paddingHorizontal: 2,
   },
   sectionHeading: {
-    fontFamily: Fonts.mono,
-    fontSize: 11.5,
-    fontWeight: '700',
-    letterSpacing: 0.8,
+    fontFamily: Fonts.headingDemiBold,
+    fontSize: 12,
+    letterSpacing: 0.6,
+    textTransform: 'uppercase',
   },
-  offlinePill: {
+
+  // Scholar Mastery Overview Card
+  overviewStatsCard: {
+    borderRadius: 22,
+    borderWidth: 1,
+    overflow: 'hidden',
+    marginBottom: 16,
+    position: 'relative',
+  },
+  overviewCardInner: {
+    padding: 18,
+  },
+  overviewTopRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
+    justifyContent: 'space-between',
+    marginBottom: 12,
+  },
+  overviewTagBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  overviewTagText: {
+    fontFamily: Fonts.mono,
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+  },
+  masteryPill: {
     paddingHorizontal: 8,
     paddingVertical: 3,
     borderRadius: 8,
   },
-  offlinePillText: {
+  masteryPillText: {
     fontFamily: Fonts.mono,
     fontSize: 10.5,
-    fontWeight: '600',
+    fontWeight: '800',
+    fontVariant: ['tabular-nums'],
+  },
+  overviewTrackBg: {
+    height: 6,
+    borderRadius: 3,
+    overflow: 'hidden',
+    marginBottom: 14,
+  },
+  overviewTrackFill: {
+    height: '100%',
+    borderRadius: 3,
+  },
+  metricsCapsuleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-around',
+    borderRadius: 14,
+    borderWidth: 1,
+    paddingVertical: 10,
+    paddingHorizontal: 6,
+  },
+  metricColumn: {
+    alignItems: 'center',
+    flex: 1,
+  },
+  metricBigNumber: {
+    fontFamily: Fonts.heading,
+    fontSize: 16,
+    fontWeight: '800',
+    fontVariant: ['tabular-nums'],
+  },
+  metricLabel: {
+    fontFamily: Fonts.body,
+    fontSize: 10.5,
+    marginTop: 2,
+  },
+  metricDivider: {
+    width: 1,
+    height: 22,
   },
 
   // Loading & Empty States
@@ -1379,36 +1682,60 @@ const styles = StyleSheet.create({
   },
   languageCard: {
     borderWidth: 1,
-    borderRadius: 18,
+    borderRadius: 20,
+    overflow: 'hidden',
+    marginBottom: 2,
+  },
+  cardAccentLine: {
+    height: 3.5,
+    width: '100%',
+  },
+  cardInnerPadding: {
     padding: 16,
+  },
+  sampleChipsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginTop: 10,
+    marginBottom: 12,
+  },
+  sampleChipPill: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 7,
+    borderWidth: 1,
+    maxWidth: '48%',
+  },
+  sampleChipText: {
+    fontFamily: Fonts.body,
+    fontSize: 11,
   },
   cardTopRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    gap: 14,
-  },
-  chevronWrap: {
-    paddingTop: 4,
+    gap: 12,
   },
   langIconBox: {
-    width: 48,
-    height: 48,
-    borderRadius: 15,
-    borderWidth: 1.5,
-    justifyContent: 'center',
+    width: 44,
+    height: 44,
+    borderRadius: 14,
+    borderWidth: 1,
     alignItems: 'center',
+    justifyContent: 'center',
   },
   nameBadgeRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    gap: 7,
     flexWrap: 'wrap',
     marginBottom: 4,
   },
   languageName: {
     fontFamily: Fonts.heading,
-    fontSize: 17,
+    fontSize: 16.5,
     fontWeight: '800',
+    letterSpacing: -0.3,
   },
   badgePill: {
     paddingHorizontal: 7,
@@ -1426,126 +1753,135 @@ const styles = StyleSheet.create({
     fontSize: 12.5,
     lineHeight: 18,
   },
-  cardDivider: {
-    height: 1,
-    marginVertical: 12,
+  cardProgressBarBg: {
+    height: 5,
+    borderRadius: 2.5,
+    overflow: 'hidden',
+    marginBottom: 10,
+  },
+  cardProgressBarFill: {
+    height: '100%',
+    borderRadius: 2.5,
   },
   cardFooter: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-  },
-  footerMetaRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 6,
+    paddingTop: 2,
   },
   progressCountText: {
-    fontFamily: Fonts.mono,
-    fontSize: 11,
-  },
-  progressPercentText: {
-    fontFamily: Fonts.mono,
-    fontSize: 11,
-    fontWeight: '700',
-  },
-  cardProgressBarBg: {
-    height: 6,
-    borderRadius: 3,
-    overflow: 'hidden',
-  },
-  cardProgressBarFill: {
-    height: '100%',
-    borderRadius: 3,
+    fontFamily: Fonts.body,
+    fontSize: 11.5,
+    fontVariant: ['tabular-nums'],
   },
   statusPill: {
-    paddingHorizontal: 9,
-    paddingVertical: 5,
+    paddingHorizontal: 8,
+    paddingVertical: 3.5,
     borderRadius: 8,
+    borderWidth: 1,
   },
   statusPillText: {
     fontFamily: Fonts.mono,
-    fontSize: 10.5,
+    fontSize: 9.5,
     fontWeight: '800',
     letterSpacing: 0.4,
   },
+  ctaPillWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  ctaPillText: {
+    fontFamily: Fonts.headingDemiBold,
+    fontSize: 12,
+  },
 
-  // Detail View Header
+  // ── VIEW 2: CHAPTER DETAIL VIEW ───────────────────────────
   detailHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 16,
+    paddingHorizontal: 18,
     paddingBottom: 14,
     borderBottomWidth: 1,
-    gap: 10,
   },
   backBtnPill: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 10,
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 12,
     borderWidth: 1,
   },
   backBtnText: {
-    fontFamily: Fonts.heading,
+    fontFamily: Fonts.headingMedium,
     fontSize: 13,
-    fontWeight: '700',
+  },
+  headerCodePill: {
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  headerCodePillText: {
+    fontFamily: Fonts.mono,
+    fontSize: 11,
+    fontWeight: '800',
   },
   headerCompleteBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 5,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 10,
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 6.5,
+    borderRadius: 12,
     borderWidth: 1,
   },
   headerCompleteText: {
-    fontFamily: Fonts.mono,
-    fontSize: 11,
-    fontWeight: '700',
+    fontFamily: Fonts.headingMedium,
+    fontSize: 12.5,
   },
-
-  // Detail Track Banner
   trackBanner: {
+    borderRadius: 22,
     borderWidth: 1,
-    borderRadius: 18,
+    overflow: 'hidden',
+    marginBottom: 6,
+  },
+  trackBannerBody: {
     padding: 18,
-    marginBottom: 16,
   },
   bannerTagRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
     marginBottom: 8,
   },
   bannerTagLeft: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    gap: 12,
   },
   bannerIconBox: {
-    width: 28,
-    height: 28,
-    borderRadius: 8,
+    width: 44,
+    height: 44,
+    borderRadius: 14,
     borderWidth: 1,
-    justifyContent: 'center',
     alignItems: 'center',
+    justifyContent: 'center',
+  },
+  heroSubMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 4,
   },
   bannerBadge: {
-    paddingHorizontal: 9,
-    paddingVertical: 3,
-    borderRadius: 8,
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 6,
   },
   bannerBadgeText: {
     fontFamily: Fonts.mono,
-    fontSize: 10.5,
+    fontSize: 10,
     fontWeight: '800',
-    letterSpacing: 0.6,
+    letterSpacing: 0.4,
   },
   lessonCountText: {
     fontFamily: Fonts.mono,
@@ -1554,118 +1890,142 @@ const styles = StyleSheet.create({
   },
   trackName: {
     fontFamily: Fonts.heading,
-    fontSize: 21,
+    fontSize: 16.5,
     fontWeight: '800',
-    marginBottom: 4,
+    letterSpacing: -0.3,
   },
   trackDesc: {
     fontFamily: Fonts.body,
     fontSize: 13,
-    lineHeight: 19,
+    lineHeight: 18,
+    marginTop: 10,
+    marginBottom: 12,
+  },
+  progressBarBg: {
+    height: 5,
+    borderRadius: 2.5,
+    overflow: 'hidden',
     marginBottom: 10,
   },
-
-  // Chapters & Topics List
+  progressBarFill: {
+    height: '100%',
+    borderRadius: 2.5,
+  },
+  trackStatsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 6,
+  },
+  trackStatsText: {
+    fontFamily: Fonts.body,
+    fontSize: 11.5,
+    fontVariant: ['tabular-nums'],
+  },
+  trackPercentText: {
+    fontFamily: Fonts.mono,
+    fontSize: 12,
+    fontWeight: '800',
+    fontVariant: ['tabular-nums'],
+  },
   chaptersList: {
-    gap: 16,
+    gap: 14,
   },
   chapterCard: {
-    borderWidth: 1,
     borderRadius: 18,
+    borderWidth: 1,
     overflow: 'hidden',
   },
   chapterHeader: {
     flexDirection: 'row',
     alignItems: 'center',
+    gap: 12,
     padding: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255, 255, 255, 0.06)',
   },
   chapterNumberBadge: {
-    width: 34,
-    height: 34,
-    borderRadius: 10,
-    alignItems: 'center',
+    width: 38,
+    height: 38,
+    borderRadius: 12,
     justifyContent: 'center',
-    marginRight: 12,
+    alignItems: 'center',
   },
   chapterNumberText: {
     fontFamily: Fonts.mono,
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: '800',
   },
   chapterTitle: {
     fontFamily: Fonts.heading,
-    fontSize: 16,
+    fontSize: 15.5,
     fontWeight: '700',
   },
   chapterSubDesc: {
     fontFamily: Fonts.body,
     fontSize: 11.5,
-    marginTop: 2,
   },
   chapterBadgePill: {
     paddingHorizontal: 8,
-    paddingVertical: 3,
+    paddingVertical: 3.5,
     borderRadius: 8,
   },
   chapterBadgePillText: {
     fontFamily: Fonts.mono,
-    fontSize: 11,
-    fontWeight: '700',
+    fontSize: 10,
+    fontWeight: '800',
+    fontVariant: ['tabular-nums'],
   },
   subtopicsContainer: {
-    paddingHorizontal: 8,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(0,0,0,0.06)',
   },
   subtopicRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingVertical: 13,
-    paddingHorizontal: 8,
-    borderBottomWidth: 1,
-    borderRadius: 10,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderTopWidth: 1,
   },
   subtopicLeft: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
     flex: 1,
-    marginRight: 8,
   },
-  topicCheckTrigger: {
-    padding: 2,
+  subtopicCheckBtn: {
+    width: 22,
+    height: 22,
+    borderRadius: 7,
+    borderWidth: 1.5,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   subtopicTitle: {
-    fontFamily: Fonts.body,
-    fontSize: 14,
-    fontWeight: '400',
-    lineHeight: 20,
+    fontFamily: Fonts.bodyMedium,
+    fontSize: 13.5,
   },
   subtopicMetaRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    marginTop: 3,
+    marginTop: 2,
   },
   subtopicTagText: {
     fontFamily: Fonts.mono,
-    fontSize: 10,
-    fontWeight: '700',
+    fontSize: 10.5,
   },
   subtopicChevronCol: {
     paddingLeft: 4,
   },
 
-  // Topic Study Detail View
+  // ── VIEW 3: TOPIC STUDY DETAIL ────────────────────────────
   topicBreadcrumbRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
     marginBottom: 8,
-    flexWrap: 'wrap',
   },
   chapterPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
     paddingHorizontal: 8,
     paddingVertical: 3,
     borderRadius: 6,
@@ -1680,182 +2040,42 @@ const styles = StyleSheet.create({
     fontFamily: Fonts.heading,
     fontSize: 22,
     fontWeight: '800',
-    marginBottom: 12,
+    letterSpacing: -0.4,
+    lineHeight: 28,
+    marginBottom: 16,
   },
-  summaryCard: {
-    borderWidth: 1,
-    borderLeftWidth: 3.5,
-    borderRadius: 12,
-    padding: 14,
-    marginBottom: 14,
-  },
-  summaryCardTitle: {
-    fontFamily: Fonts.mono,
-    fontSize: 10,
-    fontWeight: '800',
-    letterSpacing: 0.6,
-    marginBottom: 4,
-  },
-  summaryCardText: {
-    fontFamily: Fonts.body,
-    fontSize: 13,
-    lineHeight: 19,
-  },
-  contentCard: {
-    borderWidth: 1,
-    borderRadius: 16,
-    padding: 16,
-    marginBottom: 14,
-  },
-  sectionHeadingRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginBottom: 10,
-  },
-  sectionHeadingText: {
-    fontFamily: Fonts.heading,
-    fontSize: 15,
-    fontWeight: '700',
-  },
-  explanationText: {
-    fontFamily: Fonts.body,
-    fontSize: 13.5,
-    lineHeight: 22,
-  },
-
-  // Code Card
-  codeCard: {
-    borderRadius: 16,
-    padding: 16,
-    marginBottom: 12,
-  },
-  codeHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 10,
-    paddingBottom: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(255, 255, 255, 0.08)',
-  },
-  codeLangBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  codeLangText: {
-    fontFamily: Fonts.mono,
-    fontSize: 11,
-    color: '#94A3B8',
-    textTransform: 'uppercase',
-  },
-  copyCodeBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-  },
-  copyCodeText: {
-    fontFamily: Fonts.mono,
-    fontSize: 11,
-    color: '#94A3B8',
-  },
-  codeText: {
-    fontFamily: Fonts.mono,
-    fontSize: 12,
-    color: '#38BDF8',
-    lineHeight: 18,
-  },
-
-  // Output Box
-  outputBox: {
-    borderRadius: 14,
-    padding: 14,
-    marginBottom: 14,
-  },
-  outputHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    marginBottom: 6,
-  },
-  outputHeaderText: {
-    fontFamily: Fonts.mono,
-    fontSize: 10.5,
-    color: '#10B981',
-    fontWeight: '700',
-    textTransform: 'uppercase',
-  },
-  outputText: {
-    fontFamily: Fonts.mono,
-    fontSize: 12,
-    color: '#E2E8F0',
-    lineHeight: 17,
-  },
-
-  // Steps
-  stepsList: {
-    gap: 10,
-  },
-  stepItemRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 10,
-  },
-  stepBulletCircle: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
+  topicLoadingContainer: {
+    paddingVertical: 48,
     alignItems: 'center',
     justifyContent: 'center',
-    marginTop: 2,
+    gap: 12,
   },
-  stepBulletNum: {
-    fontFamily: Fonts.mono,
-    fontSize: 11,
-    fontWeight: '800',
-  },
-  stepItemText: {
-    fontFamily: Fonts.body,
+  topicLoadingText: {
+    fontFamily: Fonts.bodyMedium,
     fontSize: 13,
-    lineHeight: 19,
-    flex: 1,
   },
-
-  // Pagination Next / Prev
   paginationRow: {
     flexDirection: 'row',
     gap: 12,
-    marginTop: 4,
+    marginTop: 20,
   },
   navPageBtn: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    borderWidth: 1,
+    padding: 13,
     borderRadius: 14,
-    padding: 12,
+    borderWidth: 1,
   },
   navPageSub: {
     fontFamily: Fonts.mono,
     fontSize: 9.5,
     fontWeight: '700',
+    letterSpacing: 0.5,
   },
   navPageTitle: {
-    fontFamily: Fonts.heading,
+    fontFamily: Fonts.headingMedium,
     fontSize: 13,
-    fontWeight: '600',
     marginTop: 2,
-  },
-  topicLoadingContainer: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 48,
-    gap: 12,
-  },
-  topicLoadingText: {
-    fontFamily: Fonts.body,
-    fontSize: 14,
   },
 });

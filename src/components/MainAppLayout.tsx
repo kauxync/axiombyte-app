@@ -5,7 +5,8 @@ import { BottomNavBar, AppTab } from './BottomNavBar';
 import { HomeDashboardView } from './HomeDashboardView';
 import { RoadmapsView } from './RoadmapsView';
 import { SubjectsNotesView } from './SubjectsNotesView';
-import { ProfileWalletView } from './ProfileWalletView';
+import { ProfilePage } from './ProfilePage';
+import { LeaderboardView } from './LeaderboardView';
 
 export function MainAppLayout() {
   const { colors } = useAppTheme();
@@ -108,9 +109,16 @@ export function MainAppLayout() {
             canGoBack={canGoBack}
           />
         );
+      case 'leaderboard':
+        return (
+          <LeaderboardView
+            onGoBack={handleGoBack}
+            canGoBack={canGoBack}
+          />
+        );
       case 'profile':
         return (
-          <ProfileWalletView
+          <ProfilePage
             onGoBack={handleGoBack}
             canGoBack={canGoBack}
           />

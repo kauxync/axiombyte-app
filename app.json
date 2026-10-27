@@ -124,7 +124,8 @@
             "enableBundleCompression": true
           }
         }
-      ]
+      ],
+      "expo-web-browser"
     ],
     "updates": {
       "url": "https://u.expo.dev/40cd73c4-3e56-4871-a7ff-1241eac367aa",

@@ -22,6 +22,8 @@ export const API_ENDPOINTS = {
   STREAK_SYNC: `${API_BASE_URL}/api/streak_sync.php`,
   POLICIES: `${API_BASE_URL}/api/policies.php`,
   REGISTER_DEVICE: `${API_BASE_URL}/api/register_device.php`,
+  LEADERBOARD: `${API_BASE_URL}/api/leaderboard.php`,
+  ACTIVITY_CALENDAR: `${API_BASE_URL}/api/activity_calendar.php`,
 };
 
 /**
@@ -610,12 +612,18 @@ export interface RemoteStreakPayload {
   lastActiveDate: string;
   todayCompleted: boolean;
   freezeCount: number;
+  freezeStatus?: 'available' | 'used' | 'none';
+  freezePurchasedDate?: string;
+  freezeUsedDate?: string;
   lostStreak: number;
   coins: number;
+  xp?: number;
   coinsAwarded?: number;
+  xpAwarded?: number;
   freezeUsedToday?: boolean;
   streakLostToday?: boolean;
   recovered?: boolean;
+  restoredStreak?: number;
   message?: string;
 }
 
@@ -636,7 +644,7 @@ function getClientTimezone(): string {
 }
 
 /**
- * 12. Online Streak Check-In & Sync (WhatsApp-style automatic check-in on coming online)
+ * 12. Online Streak Check-In & Sync (authoritative cloud sync)
  */
 export async function syncOnlineStreakWithApi(userId: string): Promise<ApiResponse<RemoteStreakPayload>> {
   try {
@@ -657,22 +665,17 @@ export async function syncOnlineStreakWithApi(userId: string): Promise<ApiRespon
     });
     clearTimeout(timer);
 
-    if (res.ok) {
-      return await res.json();
-    }
-    return { success: false, message: 'Could not sync streak with remote server' };
+    return await res.json();
   } catch (err: any) {
     return { success: false, message: err?.message || 'Offline streak check' };
   }
 }
 
 /**
- * 13. Purchase Streak Freeze shield (50 coins) & optionally recover broken streak
+ * 13. Purchase Streak Freeze shield (50 coins)
+ * Enforces server-side limit of 1 unused freeze.
  */
-export async function purchaseStreakFreezeApi(
-  userId: string,
-  recoverLost = false
-): Promise<ApiResponse<RemoteStreakPayload>> {
+export async function purchaseStreakFreezeApi(userId: string): Promise<ApiResponse<RemoteStreakPayload>> {
   try {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 15000);
@@ -684,7 +687,6 @@ export async function purchaseStreakFreezeApi(
       body: JSON.stringify({
         userId,
         action: 'purchase_freeze',
-        recoverLost,
         clientDate: getClientCalendarDate(),
         timezone: getClientTimezone(),
       }),
@@ -699,9 +701,10 @@ export async function purchaseStreakFreezeApi(
 }
 
 /**
- * 14. Recover broken streak using existing available Streak Freeze shield
+ * 14. Purchase Streak Restore (50 coins)
+ * Restores previously lost streak; separate from freeze.
  */
-export async function recoverStreakWithFreezeApi(userId: string): Promise<ApiResponse<RemoteStreakPayload>> {
+export async function purchaseStreakRestoreApi(userId: string): Promise<ApiResponse<RemoteStreakPayload>> {
   try {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 15000);
@@ -712,7 +715,7 @@ export async function recoverStreakWithFreezeApi(userId: string): Promise<ApiRes
       headers: { 'Content-Type': 'application/json', ...authHeader },
       body: JSON.stringify({
         userId,
-        action: 'recover_streak',
+        action: 'purchase_restore',
         clientDate: getClientCalendarDate(),
         timezone: getClientTimezone(),
       }),
@@ -722,8 +725,15 @@ export async function recoverStreakWithFreezeApi(userId: string): Promise<ApiRes
 
     return await res.json();
   } catch (err: any) {
-    return { success: false, message: err?.message || 'Failed to recover streak' };
+    return { success: false, message: err?.message || 'Failed to restore streak' };
   }
+}
+
+/**
+ * Legacy alias for recoverStreakWithFreezeApi
+ */
+export async function recoverStreakWithFreezeApi(userId: string): Promise<ApiResponse<RemoteStreakPayload>> {
+  return purchaseStreakRestoreApi(userId);
 }
 
 /**
@@ -748,12 +758,149 @@ export async function recordDailyStreakActivityApi(userId: string): Promise<ApiR
     });
     clearTimeout(timer);
 
-    if (res.ok) {
-      return await res.json();
-    }
-    return { success: false, message: 'Could not record streak activity with server' };
+    return await res.json();
   } catch (err: any) {
     return { success: false, message: err?.message || 'Offline activity recorded' };
+  }
+}
+
+export interface LeaderboardEntry {
+  rank: number;
+  userId: string;
+  name: string;
+  username: string;
+  avatarUrl: string | null;
+  university?: string;
+  xp: number;
+  coins: number;
+  currentStreak: number;
+  longestStreak: number;
+  isCurrentUser?: boolean;
+}
+
+export interface LeaderboardData {
+  entries: LeaderboardEntry[];
+  currentUser: LeaderboardEntry | null;
+  totalUsers: number;
+  offset: number;
+  limit: number;
+  hasMore: boolean;
+}
+
+/**
+ * 16. Fetch Global Leaderboard rankings
+ */
+export async function fetchLeaderboardApi(params?: {
+  userId?: string;
+  limit?: number;
+  offset?: number;
+}): Promise<ApiResponse<LeaderboardData>> {
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 15000);
+
+    const query = new URLSearchParams();
+    if (params?.userId) query.append('userId', params.userId);
+    if (params?.limit) query.append('limit', String(params.limit));
+    if (params?.offset !== undefined) query.append('offset', String(params.offset));
+
+    const url = `${API_ENDPOINTS.LEADERBOARD}?${query.toString()}`;
+    const authHeader = await getAuthHeader();
+    const res = await fetch(url, {
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json', ...authHeader },
+      signal: controller.signal,
+    });
+    clearTimeout(timer);
+
+    if (res.ok) {
+      const json = await res.json();
+      if (json && json.success && json.data) {
+        return json;
+      }
+      // If server returned success: false (e.g. while server file is being updated), fallback without userId
+      if (params?.userId) {
+        return fetchLeaderboardApi({ limit: params.limit, offset: params.offset });
+      }
+      return { success: false, message: json?.message || 'Could not fetch leaderboard' };
+    }
+
+    // If server returned non-200 (e.g. HTTP 500 on un-updated server), fallback without userId
+    if (params?.userId) {
+      return fetchLeaderboardApi({ limit: params.limit, offset: params.offset });
+    }
+    return { success: false, message: 'Could not fetch leaderboard' };
+  } catch (err: any) {
+    if (params?.userId) {
+      return fetchLeaderboardApi({ limit: params.limit, offset: params.offset });
+    }
+    return { success: false, message: err?.message || 'Failed to fetch leaderboard' };
+  }
+}
+
+export interface ActivityCalendarItem {
+  date: string;
+  dayOfWeek: number;
+  month: string;
+  count: number;
+  level: number;
+  status: 'active' | 'frozen' | 'restored' | 'missed';
+  xp: number;
+  streak: number;
+  notes?: string | null;
+}
+
+export interface ActivityCalendarSummary {
+  totalContributions: number;
+  totalActiveDays: number;
+  totalFrozenDays: number;
+  totalRestoredDays: number;
+  totalXp: number;
+  currentStreak: number;
+  longestStreak: number;
+  freezeStatus: 'available' | 'used' | 'none';
+}
+
+export interface ActivityCalendarData {
+  startDate: string;
+  endDate: string;
+  totalDays: number;
+  summary: ActivityCalendarSummary;
+  calendar: ActivityCalendarItem[];
+}
+
+/**
+ * 17. Fetch User Activity Calendar (GitHub / LeetCode style contribution history)
+ */
+export async function fetchActivityCalendarApi(
+  userId: string,
+  days = 90,
+  year?: number,
+  startDate?: string
+): Promise<ApiResponse<ActivityCalendarData>> {
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 12000);
+
+    const query = new URLSearchParams({ userId, days: String(days) });
+    if (year) query.append('year', String(year));
+    if (startDate) query.append('startDate', startDate);
+
+    const authHeader = await getAuthHeader();
+    const res = await fetch(`${API_ENDPOINTS.ACTIVITY_CALENDAR}?${query.toString()}`, {
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json', ...authHeader },
+      signal: controller.signal,
+    });
+    clearTimeout(timer);
+
+    if (res.ok) {
+      const json = await res.json();
+      return json;
+    }
+    return { success: false, message: 'Could not fetch activity calendar' };
+  } catch (err: any) {
+    return { success: false, message: err?.message || 'Failed to fetch activity calendar' };
   }
 }
 

@@ -3,6 +3,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { AppTab } from '@/components/BottomNavBar';
 import { LanguageRoadmap, LanguageProgress, getAllTopics } from '@/data/roadmaps';
 import { SubjectItem, getAllSubjectTopics } from '@/data/subjects';
+import { recordDailyStreakActivity } from './storage';
 
 export interface ActiveStudyItem {
   id: string;
@@ -148,6 +149,8 @@ export async function toggleLessonCompletion(lessonId: string): Promise<string[]
       updated = current.filter((id) => id !== lessonId);
     } else {
       updated = [...current, lessonId];
+      // Complete daily study target & update streak in storage
+      recordDailyStreakActivity().catch(() => {});
     }
 
     await AsyncStorage.setItem(STORAGE_KEY_COMPLETED_LESSONS, JSON.stringify(updated));
@@ -170,6 +173,8 @@ export async function markLessonCompleted(
     if (!current.includes(lessonId)) {
       const updated = [...current, lessonId];
       await AsyncStorage.setItem(STORAGE_KEY_COMPLETED_LESSONS, JSON.stringify(updated));
+      // Complete daily study target & update streak in storage
+      recordDailyStreakActivity().catch(() => {});
       return { updated, newlyCompleted: true };
     }
     return { updated: current, newlyCompleted: false };
