@@ -52,7 +52,7 @@ interface BottomNavBarProps {
   onTabChange: (tab: AppTab) => void;
 }
 
-export function BottomNavBar({ activeTab, onTabChange }: BottomNavBarProps) {
+export const BottomNavBar = React.memo(function BottomNavBar({ activeTab, onTabChange }: BottomNavBarProps) {
   const insets = useSafeAreaInsets();
   const { colors } = useAppTheme();
 
@@ -119,7 +119,7 @@ export function BottomNavBar({ activeTab, onTabChange }: BottomNavBarProps) {
       </View>
     </View>
   );
-}
+});
 
 const styles = StyleSheet.create({
   container: {

@@ -17,8 +17,10 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAppTheme } from '@/context/ThemeContext';
 import { checkServerStatus } from '@/services/api';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useDisplayPerformance } from '@/hooks/useDisplayPerformance';
+import { useAuth } from '@/context/AuthContext';
 
-function AnimatedCard({
+const AnimatedCard = React.memo(function AnimatedCard({
   children,
   style,
   index = 0,
@@ -27,27 +29,29 @@ function AnimatedCard({
   style?: any;
   index?: number;
 }) {
+  const shouldAnimate = index < 6;
   const [scaleAnim] = useState(() => new Animated.Value(1));
-  const [fadeAnim] = useState(() => new Animated.Value(0));
-  const [translateYAnim] = useState(() => new Animated.Value(18));
+  const [fadeAnim] = useState(() => new Animated.Value(shouldAnimate ? 0 : 1));
+  const [translateYAnim] = useState(() => new Animated.Value(shouldAnimate ? 14 : 0));
 
   useEffect(() => {
+    if (!shouldAnimate) return;
     Animated.parallel([
       Animated.timing(fadeAnim, {
         toValue: 1,
-        duration: 260,
-        delay: Math.min(index * 45, 260),
+        duration: 200,
+        delay: Math.min(index * 30, 160),
         useNativeDriver: true,
       }),
       Animated.spring(translateYAnim, {
         toValue: 0,
-        friction: 8,
-        tension: 45,
-        delay: Math.min(index * 45, 260),
+        friction: 9,
+        tension: 50,
+        delay: Math.min(index * 30, 160),
         useNativeDriver: true,
       }),
     ]).start();
-  }, [fadeAnim, translateYAnim, index]);
+  }, [fadeAnim, translateYAnim, index, shouldAnimate]);
 
   return (
     <Animated.View
@@ -60,18 +64,87 @@ function AnimatedCard({
       <View style={style}>{children}</View>
     </Animated.View>
   );
-}
+});
 
-export function SettingsPage({ onBack }: { onBack: () => void }) {
+export function SettingsPage({
+  onBack,
+  onNavigateToEditProfile,
+}: {
+  onBack: () => void;
+  onNavigateToEditProfile?: () => void;
+}) {
   const insets = useSafeAreaInsets();
   const { colors, themeMode, setThemeMode } = useAppTheme();
+  const displayMetrics = useDisplayPerformance();
   const { showAlert } = useAlert();
+  const { user, refreshProfile } = useAuth();
   const [checkingServer, setCheckingServer] = useState(false);
+  const [isProfiling, setIsProfiling] = useState(false);
+  const [syncingProfile, setSyncingProfile] = useState(Boolean(user?.id));
+  const [profileLastSynced, setProfileLastSynced] = useState<string | null>(null);
 
   const Alert = {
     alert: (title: string, message?: string, buttons?: StyledAlertButton[]) => {
       showAlert(title, message, buttons);
     },
+  };
+
+  // Always fetch live profile data directly from DB on Settings page mount (never from cache)
+  useEffect(() => {
+    let isMounted = true;
+    if (user?.id) {
+      refreshProfile(user.id)
+        .then(() => {
+          if (isMounted) {
+            setProfileLastSynced(new Date().toLocaleTimeString());
+          }
+        })
+        .catch(() => {})
+        .finally(() => {
+          if (isMounted) {
+            setSyncingProfile(false);
+          }
+        });
+    }
+    return () => {
+      isMounted = false;
+    };
+  }, [user?.id, refreshProfile]);
+
+  const handleSyncProfileFromDb = async () => {
+    if (!user?.id) return;
+    setSyncingProfile(true);
+    try {
+      const liveUser = await refreshProfile(user.id);
+      if (liveUser) {
+        setProfileLastSynced(new Date().toLocaleTimeString());
+        Alert.alert(
+          '✅ Profile Synchronized from DB',
+          `Your profile data was fetched directly from Hostinger MySQL.\n\n• Name: ${liveUser.name || 'Not set'}\n• Username: @${liveUser.username}\n• University: ${liveUser.university || 'Not set'}\n• Department: ${liveUser.collegeDepartment || 'Not set'}\n• Semester: ${liveUser.semester || 'Not set'}\n• Coins: ${liveUser.coins}\n• Profile Completed: ${liveUser.isProfileCompleted ? 'Yes' : 'No'}`
+        );
+      } else {
+        Alert.alert('Notice', 'Could not refresh profile from remote database.');
+      }
+    } catch (e: any) {
+      Alert.alert('Sync Error', e?.message || 'Failed to fetch live profile.');
+    } finally {
+      setSyncingProfile(false);
+    }
+  };
+
+  const handleTestPerformance = async () => {
+    setIsProfiling(true);
+    try {
+      const report = await displayMetrics.profileAction('UI Render & Scroll Test', 1200);
+      Alert.alert(
+        '📊 Display Performance Profile',
+        `• Hardware Refresh Rate: ${report.targetFps}Hz\n• Measured Render Speed: ${report.actualFps} FPS\n• Average Frame Delta: ${report.averageFrameTimeMs}ms\n• Frame Budget: ${displayMetrics.frameBudgetMs}ms\n• Dropped Frames: ${report.droppedFrames} (${report.jankPercentage}%)\n• Rating: ${report.smoothnessRating}`
+      );
+    } catch {
+      Alert.alert('Performance Test', 'Completed frame rate diagnosis.');
+    } finally {
+      setIsProfiling(false);
+    }
   };
 
   useEffect(() => {
@@ -84,17 +157,23 @@ export function SettingsPage({ onBack }: { onBack: () => void }) {
 
   const handleClearCache = async () => {
     Alert.alert(
-      'Clear Offline Cache',
-      'This will clear locally stored curriculum copies. They will be refetched automatically on your next launch.',
+      'Clear Local Cache & Refetch from DB',
+      'This will clear local curriculum and directory cache. Fresh user and curriculum data will be fetched directly from the database.',
       [
         { text: 'Cancel', style: 'cancel' },
         {
-          text: 'Clear Cache',
+          text: 'Clear & Refetch',
           style: 'destructive',
           onPress: async () => {
             try {
               await AsyncStorage.removeItem('@axiombyte_curriculum_cache_v1');
-              Alert.alert('Cache Cleared', 'Offline curriculum cache has been reset.');
+              await AsyncStorage.removeItem('@axiombyte_universities_cache_v1');
+              await AsyncStorage.removeItem('@axiombyte_departments_cache_v1');
+              if (user?.id) {
+                await refreshProfile(user.id);
+                setProfileLastSynced(new Date().toLocaleTimeString());
+              }
+              Alert.alert('Cache Cleared', 'Offline caches cleared and live profile refetched from database.');
             } catch {
               Alert.alert('Notice', 'Cache could not be removed.');
             }
@@ -168,7 +247,123 @@ export function SettingsPage({ onBack }: { onBack: () => void }) {
           styles.scrollContent,
           { paddingBottom: Math.max(insets.bottom, 24) + 80 },
         ]}
+        scrollEventThrottle={displayMetrics.scrollEventThrottle}
+        removeClippedSubviews={false}
+        overScrollMode="never"
         showsVerticalScrollIndicator={false}>
+        {/* Account & Profile Data (Always Fetched Live from DB) */}
+        {user && (
+          <AnimatedCard
+            index={0}
+            style={[styles.cardBlock, { backgroundColor: colors.card, borderColor: colors.border }]}>
+            <View style={styles.sectionHeaderRow}>
+              <View style={[styles.sectionIconBadge, { backgroundColor: 'rgba(32, 138, 239, 0.12)' }]}>
+                <Ionicons name="person-circle-outline" size={18} color={colors.primary} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <Text style={[styles.subSectionTitle, { color: colors.text }]}>Database Profile Sync</Text>
+                  <View style={[styles.dbLiveBadge, { backgroundColor: 'rgba(16, 185, 129, 0.14)' }]}>
+                    <View style={styles.liveDot} />
+                    <Text style={styles.dbLiveBadgeText}>LIVE DB</Text>
+                  </View>
+                </View>
+                <Text style={[styles.sectionSubtitle, { color: colors.textMuted }]}>
+                  {profileLastSynced ? `Directly synced from MySQL at ${profileLastSynced}` : 'Fetched live from Hostinger MySQL'}
+                </Text>
+              </View>
+            </View>
+
+            <View style={[styles.profileInfoBox, { backgroundColor: colors.cardSecondary, borderColor: colors.borderSubtle }]}>
+              <View style={styles.profileRow}>
+                <Text style={[styles.profileLabel, { color: colors.textMuted }]}>Full Name</Text>
+                <Text style={[styles.profileValue, { color: colors.text }]}>{user.name || 'Not set'}</Text>
+              </View>
+              <View style={styles.profileRow}>
+                <Text style={[styles.profileLabel, { color: colors.textMuted }]}>Username</Text>
+                <Text style={[styles.profileValue, { color: colors.primary }]}>@{user.username}</Text>
+              </View>
+              <View style={styles.profileRow}>
+                <Text style={[styles.profileLabel, { color: colors.textMuted }]}>Email</Text>
+                <Text style={[styles.profileValue, { color: colors.textSecondary }]} numberOfLines={1}>{user.email}</Text>
+              </View>
+              <Pressable
+                onPress={onNavigateToEditProfile}
+                disabled={!onNavigateToEditProfile}
+                style={({ pressed }) => [
+                  styles.profileRow,
+                  pressed && onNavigateToEditProfile && { opacity: 0.7 },
+                ]}>
+                <Text style={[styles.profileLabel, { color: colors.textMuted }]}>University</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1, justifyContent: 'flex-end' }}>
+                  <Text style={[styles.profileValue, { color: colors.text }]} numberOfLines={1}>{user.university || 'Not set'}</Text>
+                  {onNavigateToEditProfile && <Ionicons name="chevron-forward" size={14} color={colors.textMuted} />}
+                </View>
+              </Pressable>
+              <Pressable
+                onPress={onNavigateToEditProfile}
+                disabled={!onNavigateToEditProfile}
+                style={({ pressed }) => [
+                  styles.profileRow,
+                  pressed && onNavigateToEditProfile && { opacity: 0.7 },
+                ]}>
+                <Text style={[styles.profileLabel, { color: colors.textMuted }]}>College / Dept</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1, justifyContent: 'flex-end' }}>
+                  <Text style={[styles.profileValue, { color: colors.text }]} numberOfLines={1}>{user.collegeDepartment || 'Not set'}</Text>
+                  {onNavigateToEditProfile && <Ionicons name="chevron-forward" size={14} color={colors.textMuted} />}
+                </View>
+              </Pressable>
+              <View style={styles.profileRow}>
+                <Text style={[styles.profileLabel, { color: colors.textMuted }]}>Semester</Text>
+                <Text style={[styles.profileValue, { color: colors.text }]}>{user.semester || 'Not set'}</Text>
+              </View>
+              <View style={[styles.profileRow, { borderBottomWidth: 0 }]}>
+                <Text style={[styles.profileLabel, { color: colors.textMuted }]}>Profile Setup</Text>
+                <Text style={[styles.profileValue, { color: user.isProfileCompleted ? '#10B981' : '#F59E0B' }]}>
+                  {user.isProfileCompleted ? 'Completed in DB' : 'Incomplete'}
+                </Text>
+              </View>
+            </View>
+
+            <Pressable
+              onPress={handleSyncProfileFromDb}
+              disabled={syncingProfile}
+              style={({ pressed }) => [
+                styles.outlineActionBtn,
+                { borderColor: colors.primary, backgroundColor: colors.primaryBg },
+                pressed && { opacity: 0.75 },
+              ]}>
+              {syncingProfile ? (
+                <ActivityIndicator size="small" color={colors.primary} />
+              ) : (
+                <Ionicons name="refresh-circle-outline" size={17} color={colors.primary} />
+              )}
+              <Text style={[styles.outlineActionBtnText, { color: colors.primary, fontWeight: '700' }]}>
+                {syncingProfile ? 'Fetching Directly from MySQL...' : 'Refetch Profile Live from Database'}
+              </Text>
+            </Pressable>
+
+            {onNavigateToEditProfile && (
+              <Pressable
+                onPress={onNavigateToEditProfile}
+                style={({ pressed }) => [
+                  styles.outlineActionBtn,
+                  {
+                    borderColor: colors.border,
+                    backgroundColor: colors.cardSecondary,
+                    marginTop: 8,
+                  },
+                  pressed && { opacity: 0.75 },
+                ]}>
+                <Ionicons name="create-outline" size={17} color={colors.text} />
+                <Text style={[styles.outlineActionBtnText, { color: colors.text, fontWeight: '600' }]}>
+                  Edit University & Department (Live Search)
+                </Text>
+              </Pressable>
+            )}
+          </AnimatedCard>
+        )}
+
         {/* 1. Appearance Section */}
         <AnimatedCard
           index={0}
@@ -225,7 +420,59 @@ export function SettingsPage({ onBack }: { onBack: () => void }) {
           </View>
         </AnimatedCard>
 
-        {/* 2. Storage & Data Section */}
+        {/* 2. Display Refresh Rate & Smoothness Section */}
+        <AnimatedCard
+          index={1}
+          style={[styles.cardBlock, { backgroundColor: colors.card, borderColor: colors.border }]}>
+          <View style={styles.sectionHeaderRow}>
+            <View style={[styles.sectionIconBadge, { backgroundColor: 'rgba(16, 185, 129, 0.12)' }]}>
+              <Ionicons name="speedometer-outline" size={16} color="#10B981" />
+            </View>
+            <View>
+              <Text style={[styles.subSectionTitle, { color: colors.text }]}>Display & Refresh Rate</Text>
+              <Text style={[styles.sectionSubtitle, { color: colors.textMuted }]}>
+                Hardware frame syncing & rendering smoothness
+              </Text>
+            </View>
+          </View>
+
+          <View style={styles.specGridRow}>
+            <View style={[styles.metricChip, { backgroundColor: colors.cardSecondary, borderColor: colors.borderSubtle }]}>
+              <Text style={[styles.metricChipVal, { color: colors.primary }]}>{displayMetrics.refreshRate} Hz</Text>
+              <Text style={[styles.metricChipLbl, { color: colors.textMuted }]}>DISPLAY REFRESH</Text>
+            </View>
+            <View style={[styles.metricChip, { backgroundColor: colors.cardSecondary, borderColor: colors.borderSubtle }]}>
+              <Text style={[styles.metricChipVal, { color: '#10B981' }]}>{displayMetrics.frameBudgetMs} ms</Text>
+              <Text style={[styles.metricChipLbl, { color: colors.textMuted }]}>FRAME BUDGET</Text>
+            </View>
+          </View>
+
+          <Text style={[styles.policyParagraph, { color: colors.textSecondary }]}>
+            {displayMetrics.isHighRefreshRateSupported
+              ? `High refresh rate (${displayMetrics.refreshRate}Hz) is active on your device. Scroll events, Reanimated worklets, and gesture physics run with low-latency ${displayMetrics.frameBudgetMs}ms frame budgets.`
+              : `Standard 60Hz display mode is active (${displayMetrics.frameBudgetMs}ms budget per frame). UI rendering is optimized to prevent frame drops and conserve battery.`}
+          </Text>
+
+          <Pressable
+            onPress={handleTestPerformance}
+            disabled={isProfiling}
+            style={({ pressed }) => [
+              styles.outlineActionBtn,
+              { borderColor: colors.border, backgroundColor: colors.cardSecondary },
+              pressed && { opacity: 0.75 },
+            ]}>
+            {isProfiling ? (
+              <ActivityIndicator size="small" color={colors.primary} />
+            ) : (
+              <Ionicons name="pulse-outline" size={16} color={colors.primary} />
+            )}
+            <Text style={[styles.outlineActionBtnText, { color: colors.text }]}>
+              {isProfiling ? 'Profiling Frames...' : 'Test UI Smoothness (FPS Profile)'}
+            </Text>
+          </Pressable>
+        </AnimatedCard>
+
+        {/* 3. Storage & Data Section */}
         <AnimatedCard
           index={1}
           style={[styles.cardBlock, { backgroundColor: colors.card, borderColor: colors.border }]}>
@@ -425,6 +672,80 @@ const styles = StyleSheet.create({
     fontFamily: Fonts.heading,
     fontSize: 14,
     fontWeight: '700',
+  },
+  specGridRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginBottom: 12,
+    marginTop: 4,
+  },
+  metricChip: {
+    flex: 1,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+  },
+  metricChipVal: {
+    fontFamily: Fonts.heading,
+    fontSize: 16,
+    fontWeight: '800',
+    marginBottom: 2,
+  },
+  metricChipLbl: {
+    fontFamily: Fonts.mono,
+    fontSize: 9.5,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+  },
+  dbLiveBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 999,
+  },
+  liveDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#10B981',
+  },
+  dbLiveBadgeText: {
+    fontFamily: Fonts.mono,
+    fontSize: 9.5,
+    fontWeight: '800',
+    color: '#10B981',
+    letterSpacing: 0.6,
+  },
+  profileInfoBox: {
+    borderWidth: 1,
+    borderRadius: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    marginBottom: 12,
+    marginTop: 4,
+  },
+  profileRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 7,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(148, 163, 184, 0.1)',
+  },
+  profileLabel: {
+    fontFamily: Fonts.heading,
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  profileValue: {
+    fontFamily: Fonts.body,
+    fontSize: 12.5,
+    fontWeight: '600',
+    maxWidth: '65%',
+    textAlign: 'right',
   },
 });
 

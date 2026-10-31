@@ -3,7 +3,9 @@ import { View, Text, ActivityIndicator, StyleSheet, Platform } from 'react-nativ
 import * as WebBrowser from 'expo-web-browser';
 import { useRouter } from 'expo-router';
 import { authWithOAuth } from '@/services/api';
-import { saveStoredProfile, UserProfile, generateReferralCode } from '@/services/storage';
+import { UserProfile, generateReferralCode } from '@/services/storage';
+import { saveAuthToken } from '@/services/secureStorage';
+import { useAuth } from '@/context/AuthContext';
 import { AppIcon } from '@/components/AppIcon';
 
 // Intercept popup completions immediately
@@ -11,6 +13,7 @@ WebBrowser.maybeCompleteAuthSession({ skipRedirectCheck: true });
 
 export default function GoogleAuthCallbackScreen() {
   const router = useRouter();
+  const { setAuthenticatedUser } = useAuth();
   const [statusText, setStatusText] = useState('Completing Google Sign-in...');
 
   useEffect(() => {
@@ -50,6 +53,7 @@ export default function GoogleAuthCallbackScreen() {
                   .replace(/[^a-zA-Z0-9]/g, '')
                   .toLowerCase(),
                 avatar: googleUser.picture || '',
+                accessToken: accessToken,
               });
 
               const serverUser = apiRes.data;
@@ -69,7 +73,10 @@ export default function GoogleAuthCallbackScreen() {
                 createdAt: new Date().toISOString(),
               };
 
-              await saveStoredProfile(profile);
+              if (serverUser?.token) {
+                await saveAuthToken(serverUser.token);
+              }
+              await setAuthenticatedUser(profile);
             }
           }
         } catch (e) {
@@ -85,7 +92,7 @@ export default function GoogleAuthCallbackScreen() {
     }
 
     processAuth();
-  }, [router]);
+  }, [router, setAuthenticatedUser]);
 
   return (
     <View style={styles.container}>

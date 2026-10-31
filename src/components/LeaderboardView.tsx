@@ -15,8 +15,89 @@ import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAppTheme } from '@/context/ThemeContext';
 import { useAuth } from '@/context/AuthContext';
-import { fetchLeaderboardApi, LeaderboardData } from '@/services/api';
+import { fetchLeaderboardApi, LeaderboardData, LeaderboardEntry } from '@/services/api';
 import { Fonts } from '@/constants/theme';
+import { useDisplayPerformance } from '@/hooks/useDisplayPerformance';
+
+interface ScholarRowProps {
+  item: LeaderboardEntry;
+  isSelf: boolean;
+  colors: any;
+  isDark: boolean;
+}
+
+const ScholarRow = React.memo(function ScholarRow({
+  item,
+  isSelf,
+  colors,
+  isDark,
+}: ScholarRowProps) {
+  return (
+    <View
+      style={[
+        styles.rankRow,
+        {
+          backgroundColor: isSelf
+            ? isDark
+              ? 'rgba(32, 138, 239, 0.15)'
+              : 'rgba(32, 138, 239, 0.08)'
+            : colors.card,
+          borderColor: isSelf ? '#208AEF' : colors.border,
+          borderWidth: isSelf ? 1.5 : 1,
+        },
+      ]}>
+      {/* Rank Badge */}
+      <View style={styles.rankPill}>
+        <Text style={[styles.rankNumber, { color: isSelf ? '#208AEF' : colors.textMuted }]}>
+          #{item.rank}
+        </Text>
+      </View>
+
+      {/* Avatar */}
+      <View style={styles.avatarBox}>
+        {item.avatarUrl ? (
+          <Image source={{ uri: item.avatarUrl }} style={styles.avatarImage} />
+        ) : (
+          <View style={[styles.avatarFallback, { backgroundColor: isSelf ? '#208AEF' : colors.cardSecondary }]}>
+            <Text style={[styles.avatarFallbackLetter, { color: isSelf ? '#FFF' : colors.text }]}>
+              {item.name.charAt(0)}
+            </Text>
+          </View>
+        )}
+      </View>
+
+      {/* User Info */}
+      <View style={styles.userInfoCol}>
+        <View style={styles.userNameRow}>
+          <Text numberOfLines={1} style={[styles.rowDisplayName, { color: colors.text }]}>
+            {item.name}
+          </Text>
+          {isSelf && (
+            <View style={styles.youBadge}>
+              <Text style={styles.youBadgeText}>YOU</Text>
+            </View>
+          )}
+        </View>
+        <Text numberOfLines={1} style={[styles.rowUsername, { color: colors.textMuted }]}>
+          @{item.username} • {item.university || 'Scholar'}
+        </Text>
+      </View>
+
+      {/* XP & Streak stats */}
+      <View style={styles.rowStatsCol}>
+        <View style={[styles.xpBadge, { backgroundColor: 'rgba(245, 158, 11, 0.12)' }]}>
+          <Ionicons name="sparkles" size={12} color="#F59E0B" />
+          <Text style={styles.xpBadgeText}>{item.xp} XP</Text>
+        </View>
+        {item.currentStreak > 0 && (
+          <View style={styles.streakBadge}>
+            <Text style={styles.streakBadgeText}>🔥 {item.currentStreak}d</Text>
+          </View>
+        )}
+      </View>
+    </View>
+  );
+});
 
 interface LeaderboardViewProps {
   onGoBack?: () => void;
@@ -25,6 +106,7 @@ interface LeaderboardViewProps {
 
 export function LeaderboardView({ onGoBack, canGoBack }: LeaderboardViewProps) {
   const { colors, isDark } = useAppTheme();
+  const displayMetrics = useDisplayPerformance();
   const { user } = useAuth();
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
@@ -193,6 +275,9 @@ export function LeaderboardView({ onGoBack, canGoBack }: LeaderboardViewProps) {
             isWide && styles.wideContainer,
             { paddingBottom: insets.bottom + 100 },
           ]}
+          scrollEventThrottle={displayMetrics.scrollEventThrottle}
+          removeClippedSubviews={Platform.OS === 'android'}
+          overScrollMode="never"
           refreshControl={
             <RefreshControl
               refreshing={refreshing}
@@ -324,71 +409,13 @@ export function LeaderboardView({ onGoBack, canGoBack }: LeaderboardViewProps) {
               );
 
               return (
-                <View
+                <ScholarRow
                   key={item.userId}
-                  style={[
-                    styles.rankRow,
-                    {
-                      backgroundColor: isSelf
-                        ? isDark
-                          ? 'rgba(32, 138, 239, 0.15)'
-                          : 'rgba(32, 138, 239, 0.08)'
-                        : colors.card,
-                      borderColor: isSelf ? '#208AEF' : colors.border,
-                      borderWidth: isSelf ? 1.5 : 1,
-                    },
-                  ]}>
-                  {/* Rank Badge */}
-                  <View style={styles.rankPill}>
-                    <Text style={[styles.rankNumber, { color: isSelf ? '#208AEF' : colors.textMuted }]}>
-                      #{item.rank}
-                    </Text>
-                  </View>
-
-                  {/* Avatar */}
-                  <View style={styles.avatarBox}>
-                    {item.avatarUrl ? (
-                      <Image source={{ uri: item.avatarUrl }} style={styles.avatarImage} />
-                    ) : (
-                      <View style={[styles.avatarFallback, { backgroundColor: isSelf ? '#208AEF' : colors.cardSecondary }]}>
-                        <Text style={[styles.avatarFallbackLetter, { color: isSelf ? '#FFF' : colors.text }]}>
-                          {item.name.charAt(0)}
-                        </Text>
-                      </View>
-                    )}
-                  </View>
-
-                  {/* User Info */}
-                  <View style={styles.userInfoCol}>
-                    <View style={styles.userNameRow}>
-                      <Text numberOfLines={1} style={[styles.rowDisplayName, { color: colors.text }]}>
-                        {item.name}
-                      </Text>
-                      {isSelf && (
-                        <View style={styles.youBadge}>
-                          <Text style={styles.youBadgeText}>YOU</Text>
-                        </View>
-                      )}
-                    </View>
-                    <Text numberOfLines={1} style={[styles.rowUsername, { color: colors.textMuted }]}>
-                      @{item.username} • {item.university || 'Scholar'}
-                    </Text>
-                  </View>
-
-                  {/* XP & Streak stats */}
-                  <View style={styles.rowStatsCol}>
-                    <View style={[styles.xpBadge, { backgroundColor: 'rgba(245, 158, 11, 0.12)' }]}>
-                      <Ionicons name="sparkles" size={12} color="#F59E0B" />
-                      <Text style={styles.xpBadgeText}>{item.xp} XP</Text>
-                    </View>
-                    {item.currentStreak > 0 && (
-                      <View style={styles.streakBadge}>
-                        <Ionicons name="flame" size={12} color="#FF5A3C" />
-                        <Text style={styles.streakBadgeText}>{item.currentStreak}d</Text>
-                      </View>
-                    )}
-                  </View>
-                </View>
+                  item={item}
+                  isSelf={isSelf}
+                  colors={colors}
+                  isDark={isDark}
+                />
               );
             })}
 

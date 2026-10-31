@@ -8,6 +8,7 @@ import {
   BackHandler,
   ActivityIndicator,
   Animated,
+  Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { fetchLegalPolicies, LegalPoliciesData } from '@/services/api';
@@ -15,6 +16,7 @@ import { MarkdownContentView } from '../MarkdownContentView';
 import { Fonts } from '@/constants/theme';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAppTheme } from '@/context/ThemeContext';
+import { useDisplayPerformance } from '@/hooks/useDisplayPerformance';
 
 export type PolicyKey = 'terms' | 'privacy' | 'referral_policy';
 
@@ -39,6 +41,7 @@ export function LegalPolicyPage({
 }) {
   const insets = useSafeAreaInsets();
   const { colors, isDark } = useAppTheme();
+  const displayMetrics = useDisplayPerformance();
   const [policies, setPolicies] = useState<LegalPoliciesData | null>(null);
   const [loadingPolicies, setLoadingPolicies] = useState<boolean>(false);
 
@@ -154,6 +157,9 @@ export function LegalPolicyPage({
           styles.scrollContent,
           { paddingBottom: Math.max(insets.bottom, 24) + 80 },
         ]}
+        scrollEventThrottle={displayMetrics.scrollEventThrottle}
+        removeClippedSubviews={Platform.OS === 'android'}
+        overScrollMode="never"
         showsVerticalScrollIndicator={false}>
         <Animated.View style={{ opacity: fadeAnim }}>
           {/* Policy Meta Card */}

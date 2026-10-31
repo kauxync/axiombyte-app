@@ -93,12 +93,30 @@ export async function initAcademicCache(): Promise<void> {
     ]);
 
     if (storedUnis) {
-      const parsed: string[] = JSON.parse(storedUnis);
-      parsed.forEach((u) => knownCatalog.university.add(u));
+      try {
+        const parsed = JSON.parse(storedUnis);
+        if (Array.isArray(parsed)) {
+          parsed.forEach((u) => {
+            const name = typeof u === 'string' ? u : (typeof u === 'object' && u !== null && 'name' in u ? String((u as any).name) : null);
+            if (name && typeof name === 'string' && name.trim()) {
+              knownCatalog.university.add(name.trim());
+            }
+          });
+        }
+      } catch {}
     }
     if (storedDepts) {
-      const parsed: string[] = JSON.parse(storedDepts);
-      parsed.forEach((d) => knownCatalog.department.add(d));
+      try {
+        const parsed = JSON.parse(storedDepts);
+        if (Array.isArray(parsed)) {
+          parsed.forEach((d) => {
+            const name = typeof d === 'string' ? d : (typeof d === 'object' && d !== null && 'name' in d ? String((d as any).name) : null);
+            if (name && typeof name === 'string' && name.trim()) {
+              knownCatalog.department.add(name.trim());
+            }
+          });
+        }
+      } catch {}
     }
     isInitialized = true;
   } catch (err) {
@@ -112,7 +130,7 @@ export async function initAcademicCache(): Promise<void> {
 async function persistCatalog(type: 'university' | 'department'): Promise<void> {
   try {
     const key = type === 'university' ? STORAGE_KEY_UNIVERSITIES : STORAGE_KEY_DEPARTMENTS;
-    const items = Array.from(knownCatalog[type]);
+    const items = Array.from(knownCatalog[type]).filter((x) => typeof x === 'string' && x.trim());
     await AsyncStorage.setItem(key, JSON.stringify(items));
   } catch (err) {
     console.warn('[AcademicSearch] Error saving cache to storage:', err);
@@ -122,19 +140,25 @@ async function persistCatalog(type: 'university' | 'department'): Promise<void> 
 /**
  * Filter known local items synchronously (0ms latency, 0 DB calls)
  */
-export function filterLocalCatalog(type: 'university' | 'department', query: string): string[] {
-  const clean = query.trim().toLowerCase();
-  const allItems = Array.from(knownCatalog[type]);
+export function filterLocalCatalog(type: 'university' | 'department', query?: string | null): string[] {
+  const safe = typeof query === 'string' ? query : '';
+  const clean = safe.trim().toLowerCase();
+  const allItems = Array.from(knownCatalog[type] || []);
 
   if (!clean) {
-    return allItems.slice(0, 12);
+    return allItems
+      .filter((item) => typeof item === 'string' && item.trim())
+      .slice(0, 12);
   }
 
   // Rank: items starting with query first, then items containing query
   const startsWith: string[] = [];
   const contains: string[] = [];
 
-  for (const item of allItems) {
+  for (const rawItem of allItems) {
+    if (!rawItem) continue;
+    const item = typeof rawItem === 'string' ? rawItem : (typeof rawItem === 'object' && rawItem !== null && 'name' in rawItem ? String((rawItem as any).name) : String(rawItem));
+    if (!item) continue;
     const lower = item.toLowerCase();
     if (lower.startsWith(clean)) {
       startsWith.push(item);
@@ -154,20 +178,21 @@ export function filterLocalCatalog(type: 'university' | 'department', query: str
  */
 export function searchAcademicWithCache(
   type: 'university' | 'department',
-  query: string,
-  onResultsUpdated: (results: string[], isFromRemote: boolean) => void,
+  query?: string | null,
+  onResultsUpdated?: (results: string[], isFromRemote: boolean) => void,
   onRemoteStart?: () => void
 ): () => void {
-  const clean = query.trim().toLowerCase();
+  const safe = typeof query === 'string' ? query : '';
+  const clean = safe.trim().toLowerCase();
   const cacheKey = `${type}:${clean}`;
 
   // 1. Immediately provide local/cached results (0ms)
   if (queryCache.has(cacheKey)) {
     const cached = queryCache.get(cacheKey)!;
-    onResultsUpdated(cached, false);
+    onResultsUpdated?.(cached, false);
   } else {
-    const localMatches = filterLocalCatalog(type, query);
-    onResultsUpdated(localMatches, false);
+    const localMatches = filterLocalCatalog(type, safe);
+    onResultsUpdated?.(localMatches, false);
   }
 
   // 2. Clear any pending debounce request
@@ -192,27 +217,28 @@ export function searchAcademicWithCache(
         // Merge remote items into local catalog
         let hasNew = false;
         remoteItems.forEach((item) => {
-          if (!knownCatalog[type].has(item)) {
-            knownCatalog[type].add(item);
+          const itemName = typeof item === 'object' && item !== null && 'name' in item ? String((item as any).name) : (typeof item === 'string' ? item : '');
+          if (itemName && itemName.trim() && !knownCatalog[type].has(itemName.trim())) {
+            knownCatalog[type].add(itemName.trim());
             hasNew = true;
           }
         });
 
         // Combine local and remote results
-        const combined = filterLocalCatalog(type, query);
+        const combined = filterLocalCatalog(type, safe);
         queryCache.set(cacheKey, combined);
 
         if (hasNew) {
           persistCatalog(type);
         }
 
-        onResultsUpdated(combined, true);
+        onResultsUpdated?.(combined, true);
       } else {
-        onResultsUpdated(filterLocalCatalog(type, query), true);
+        onResultsUpdated?.(filterLocalCatalog(type, safe), true);
       }
     } catch {
       // Remote fetch failed gracefully — local results remain active
-      onResultsUpdated(filterLocalCatalog(type, query), true);
+      onResultsUpdated?.(filterLocalCatalog(type, safe), true);
     }
   }, 280);
 

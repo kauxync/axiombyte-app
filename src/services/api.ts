@@ -13,6 +13,7 @@ export const API_ENDPOINTS = {
   LOGIN: `${API_BASE_URL}/api/auth_login.php`,
   OAUTH: `${API_BASE_URL}/api/auth_oauth.php`,
   UPDATE_PROFILE: `${API_BASE_URL}/api/profile_update.php`,
+  PROFILE_GET: `${API_BASE_URL}/api/profile_get.php`,
   UPLOAD: `${API_BASE_URL}/api/upload.php`,
   ACADEMIC_LOOKUP: `${API_BASE_URL}/api/academic_lookup.php`,
   CHECK_USERNAME: `${API_BASE_URL}/api/check_username.php`,
@@ -24,6 +25,7 @@ export const API_ENDPOINTS = {
   REGISTER_DEVICE: `${API_BASE_URL}/api/register_device.php`,
   LEADERBOARD: `${API_BASE_URL}/api/leaderboard.php`,
   ACTIVITY_CALENDAR: `${API_BASE_URL}/api/activity_calendar.php`,
+  APP_VERSION: `${API_BASE_URL}/api/app_version.php`,
 };
 
 /**
@@ -132,16 +134,18 @@ export async function verifyEmailCode(email: string, code: string): Promise<ApiR
     const json = await res.json();
     return json;
   } catch {
-    // Check fallback local store
-    const record = localOtpStore.get(email.toLowerCase());
-    if (record && record.code === code.trim() && record.expiresAt > Date.now()) {
-      localOtpStore.delete(email.toLowerCase());
-      return {
-        success: true,
-        message: 'Code verified successfully (Offline/Dev Mode).',
-        data: { verified: true },
-        isMockFallback: true,
-      };
+    // Check fallback local store in DEV mode only (fail closed in production)
+    if (__DEV__) {
+      const record = localOtpStore.get(email.toLowerCase());
+      if (record && record.code === code.trim() && record.expiresAt > Date.now()) {
+        localOtpStore.delete(email.toLowerCase());
+        return {
+          success: true,
+          message: 'Code verified successfully (Offline/Dev Mode).',
+          data: { verified: true },
+          isMockFallback: true,
+        };
+      }
     }
 
     return {
@@ -224,6 +228,9 @@ export async function authWithOAuth(payload: {
   avatar?: string;
   referredBy?: string;
   code?: string;
+  accessToken?: string;
+  idToken?: string;
+  token?: string;
 }): Promise<ApiResponse> {
   try {
     const controller = new AbortController();
@@ -269,19 +276,30 @@ export async function updateProfileWithApi(payload: {
   name?: string;
   username?: string;
   university?: string;
+  universityId?: number;
   collegeDepartment?: string;
+  collegeDepartmentId?: number;
   semester?: string;
   avatar?: string;
+  appliedReferralCode?: string;
 }): Promise<ApiResponse> {
   try {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 10000);
+    const timer = setTimeout(() => controller.abort(), 12000);
 
+    const token = await getAuthToken();
     const authHeader = await getAuthHeader();
     const res = await fetch(API_ENDPOINTS.UPDATE_PROFILE, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...authHeader },
-      body: JSON.stringify(payload),
+      headers: {
+        'Content-Type': 'application/json',
+        ...authHeader,
+        ...(token ? { 'X-Auth-Token': token } : {}),
+      },
+      body: JSON.stringify({
+        ...payload,
+        ...(token ? { token } : {}),
+      }),
       signal: controller.signal,
     });
     clearTimeout(timer);
@@ -291,6 +309,56 @@ export async function updateProfileWithApi(payload: {
     return {
       success: false,
       message: err?.message || 'Failed to update remote profile.',
+      isMockFallback: true,
+    };
+  }
+}
+
+/**
+ * 7c. Fetch user profile directly from Hostinger MySQL database (bypasses any cache)
+ */
+export async function fetchUserProfileApi(
+  userId?: string
+): Promise<ApiResponse<any>> {
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 10000);
+
+    const token = await getAuthToken();
+    const authHeader = await getAuthHeader();
+
+    const query = new URLSearchParams();
+    if (userId) query.append('userId', userId);
+    query.append('_t', String(Date.now()));
+
+    const url = `${API_ENDPOINTS.PROFILE_GET}?${query.toString()}`;
+
+    const res = await fetch(url, {
+      method: 'GET',
+      headers: {
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        Pragma: 'no-cache',
+        Expires: '0',
+        ...authHeader,
+        ...(token ? { 'X-Auth-Token': token } : {}),
+      },
+      signal: controller.signal,
+    });
+    clearTimeout(timer);
+
+    if (!res.ok) {
+      return {
+        success: false,
+        message: `HTTP ${res.status}: Failed to fetch profile from database.`,
+        isMockFallback: true,
+      };
+    }
+
+    return await res.json();
+  } catch (err: any) {
+    return {
+      success: false,
+      message: err?.message || 'Could not fetch profile from remote database.',
       isMockFallback: true,
     };
   }
@@ -397,8 +465,10 @@ export async function uploadFileToHostinger(
         formData.append('user_id', userId);
       }
 
+      const authHeader = await getAuthHeader();
       res = await fetch(API_ENDPOINTS.UPLOAD, {
         method: 'POST',
+        headers: { ...authHeader },
         body: formData,
         signal: controller.signal,
       });
@@ -477,7 +547,7 @@ export async function searchAcademicDirectory(
   type: 'university' | 'department',
   query: string = '',
   limit: number = 15
-): Promise<ApiResponse<string[]>> {
+): Promise<ApiResponse<(string | { id: number; name: string })[]>> {
   try {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 8000);
@@ -514,15 +584,21 @@ export async function searchAcademicDirectory(
 export async function ensureAcademicEntry(
   type: 'university' | 'department',
   name: string
-): Promise<ApiResponse<{ name: string; created: boolean }>> {
+): Promise<ApiResponse<{ id?: number; name: string; created?: boolean }>> {
   try {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 8000);
 
+    const token = await getAuthToken();
+    const authHeader = await getAuthHeader();
     const res = await fetch(API_ENDPOINTS.ACADEMIC_LOOKUP, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ type, name }),
+      headers: {
+        'Content-Type': 'application/json',
+        ...authHeader,
+        ...(token ? { 'X-Auth-Token': token } : {}),
+      },
+      body: JSON.stringify({ type, name, ...(token ? { token } : {}) }),
       signal: controller.signal,
     });
     clearTimeout(timer);
@@ -565,10 +641,10 @@ export async function deleteAccountWithApi(userId: string): Promise<ApiResponse>
     clearTimeout(timer);
 
     return await res.json();
-  } catch {
+  } catch (err: any) {
     return {
-      success: true,
-      message: 'Account erasure request processed locally.',
+      success: false,
+      message: err?.message || 'Unable to connect to server. Remote account could not be deleted.',
       isMockFallback: true,
     };
   }

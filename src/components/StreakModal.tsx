@@ -174,6 +174,8 @@ export function StreakModal({ visible, onClose, onPracticePress }: StreakModalPr
               <Text style={[styles.statusSubtitle, { color: colors.textSecondary }]}>
                 {streak.todayCompleted
                   ? "🔥 You're on fire! You completed today's study goal."
+                  : streak.currentStreak === 0
+                  ? '💔 Streak broken! Complete a session today to start a new streak.'
                   : '⚠️ Keep the flame alive! Complete a session today.'}
               </Text>
 

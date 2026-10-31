@@ -11,6 +11,9 @@
       "icon": "./assets/expo.icon",
       "bundleIdentifier": "in.kauxync.axiombyte",
       "buildNumber": "1",
+      "infoPlist": {
+        "CADisableMinimumFrameDurationOnPhone": true
+      },
       "associatedDomains": [
         "applinks:axiombyte.kauxync.in"
       ],

@@ -1,6 +1,6 @@
 import { Platform, Dimensions, PixelRatio, AccessibilityInfo } from 'react-native';
 import * as Device from 'expo-device';
-import * as SecureStore from 'expo-secure-store';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Crypto from 'expo-crypto';
 import * as FileSystem from 'expo-file-system/legacy';
 import Constants from 'expo-constants';
@@ -13,19 +13,18 @@ const APP_START_TIME = Date.now();
 
 /**
  * Retrieves existing persistent install UUID or creates a new one.
- * Uses iOS Keychain via SecureStore so it survives app deletion & reinstallation.
+ * Uses app-scoped storage so it resets upon app deletion in compliance
+ * with Apple App Store Guideline 5.1.2 and Google Play Privacy Policy.
  */
 export async function getOrCreateInstallId(): Promise<{ installId: string; isNew: boolean }> {
   try {
-    const existing = await SecureStore.getItemAsync(INSTALL_ID_STORAGE_KEY);
+    const existing = await AsyncStorage.getItem(INSTALL_ID_STORAGE_KEY);
     if (existing) {
       return { installId: existing, isNew: false };
     }
 
     const newId = Crypto.randomUUID();
-    await SecureStore.setItemAsync(INSTALL_ID_STORAGE_KEY, newId, {
-      keychainAccessible: SecureStore.AFTER_FIRST_UNLOCK,
-    });
+    await AsyncStorage.setItem(INSTALL_ID_STORAGE_KEY, newId);
     return { installId: newId, isNew: true };
   } catch {
     // Web or fallback

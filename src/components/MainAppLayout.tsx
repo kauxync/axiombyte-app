@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { View, StyleSheet, BackHandler, Platform, ToastAndroid } from 'react-native';
 import { useAppTheme } from '@/context/ThemeContext';
 import { BottomNavBar, AppTab } from './BottomNavBar';
@@ -23,39 +23,41 @@ export function MainAppLayout() {
   const canGoBack = tabStack.length > 1;
 
   // Navigate to a new tab (pushes to history stack) with optional target entity params
-  const navigateToTab = (
-    tab: AppTab,
-    params?: { languageId?: string; subjectId?: string; topicId?: string }
-  ) => {
-    if (params) {
-      if (tab === 'roadmaps') {
-        setNavParams((prev) => ({
-          ...prev,
-          roadmaps: { languageId: params.languageId, topicId: params.topicId },
-        }));
-      } else if (tab === 'math') {
-        setNavParams((prev) => ({
-          ...prev,
-          subjects: { subjectId: params.subjectId, topicId: params.topicId },
-        }));
+  const navigateToTab = useCallback(
+    (
+      tab: AppTab,
+      params?: { languageId?: string; subjectId?: string; topicId?: string }
+    ) => {
+      if (params) {
+        if (tab === 'roadmaps') {
+          setNavParams((prev) => ({
+            ...prev,
+            roadmaps: { languageId: params.languageId, topicId: params.topicId },
+          }));
+        } else if (tab === 'math') {
+          setNavParams((prev) => ({
+            ...prev,
+            subjects: { subjectId: params.subjectId, topicId: params.topicId },
+          }));
+        }
       }
-    }
-    setTabStack((prev) => {
-      // Do not duplicate if already on that tab unless params were passed
-      if (prev[prev.length - 1] === tab) {
-        return params ? [...prev] : prev;
-      }
-      return [...prev, tab];
-    });
-  };
+      setTabStack((prev) => {
+        if (prev[prev.length - 1] === tab) {
+          return params ? [...prev] : prev;
+        }
+        return [...prev, tab];
+      });
+    },
+    []
+  );
 
   // Pop back to the previous tab in history
-  const handleGoBack = () => {
+  const handleGoBack = useCallback(() => {
     setTabStack((prev) => {
       if (prev.length <= 1) return prev;
       return prev.slice(0, prev.length - 1);
     });
-  };
+  }, []);
 
   // Hardware Back Button (Android & Gesture Navigation)
   useEffect(() => {

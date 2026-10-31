@@ -10,6 +10,7 @@ import {
   ActivityIndicator,
   Linking,
   Animated,
+  Platform,
 } from 'react-native';
 import Constants from 'expo-constants';
 import { Ionicons } from '@expo/vector-icons';
@@ -20,8 +21,9 @@ import { Fonts } from '@/constants/theme';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAppTheme } from '@/context/ThemeContext';
 import { checkAppUpdate, notifyUpdateAvailable } from '@/services/updates';
+import { useDisplayPerformance } from '@/hooks/useDisplayPerformance';
 
-function AnimatedCard({
+const AnimatedCard = React.memo(function AnimatedCard({
   children,
   style,
   index = 0,
@@ -30,27 +32,29 @@ function AnimatedCard({
   style?: any;
   index?: number;
 }) {
+  const shouldAnimate = index < 6;
   const [scaleAnim] = useState(() => new Animated.Value(1));
-  const [fadeAnim] = useState(() => new Animated.Value(0));
-  const [translateYAnim] = useState(() => new Animated.Value(18));
+  const [fadeAnim] = useState(() => new Animated.Value(shouldAnimate ? 0 : 1));
+  const [translateYAnim] = useState(() => new Animated.Value(shouldAnimate ? 14 : 0));
 
   useEffect(() => {
+    if (!shouldAnimate) return;
     Animated.parallel([
       Animated.timing(fadeAnim, {
         toValue: 1,
-        duration: 260,
-        delay: Math.min(index * 45, 260),
+        duration: 200,
+        delay: Math.min(index * 30, 160),
         useNativeDriver: true,
       }),
       Animated.spring(translateYAnim, {
         toValue: 0,
-        friction: 8,
-        tension: 45,
-        delay: Math.min(index * 45, 260),
+        friction: 9,
+        tension: 50,
+        delay: Math.min(index * 30, 160),
         useNativeDriver: true,
       }),
     ]).start();
-  }, [fadeAnim, translateYAnim, index]);
+  }, [fadeAnim, translateYAnim, index, shouldAnimate]);
 
   return (
     <Animated.View
@@ -63,7 +67,7 @@ function AnimatedCard({
       <View style={style}>{children}</View>
     </Animated.View>
   );
-}
+});
 
 export function AppInfoPage({
   onBack,
@@ -74,6 +78,7 @@ export function AppInfoPage({
 }) {
   const insets = useSafeAreaInsets();
   const { colors } = useAppTheme();
+  const displayMetrics = useDisplayPerformance();
   const { showAlert } = useAlert();
   const [checkingUpdate, setCheckingUpdate] = useState(false);
 
@@ -202,6 +207,9 @@ export function AppInfoPage({
           styles.scrollContent,
           { paddingBottom: Math.max(insets.bottom, 24) + 80 },
         ]}
+        scrollEventThrottle={displayMetrics.scrollEventThrottle}
+        removeClippedSubviews={Platform.OS === 'android'}
+        overScrollMode="never"
         showsVerticalScrollIndicator={false}>
         {/* Hero Card */}
         <AnimatedCard
@@ -254,6 +262,7 @@ export function AppInfoPage({
             { label: 'Version Name', val: appVersion },
             { label: 'Build Number', val: `${appBuildNumber} (Release)` },
             { label: 'Deep Link Scheme', val: `${appScheme}://` },
+            { label: 'Display Refresh Rate', val: `${displayMetrics.refreshRate}Hz (${displayMetrics.frameBudgetMs}ms budget)` },
             { label: 'Target Platform', val: 'Android / iOS / Web' },
             { label: 'Offline Engine', val: 'Hostinger MySQL Sync + Local Store' },
           ].map((spec, sIdx) => (

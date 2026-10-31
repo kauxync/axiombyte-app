@@ -11,7 +11,9 @@ import {
   Dimensions,
   NativeSyntheticEvent,
   NativeScrollEvent,
+  Platform,
 } from 'react-native';
+import { useDisplayPerformance } from '@/hooks/useDisplayPerformance';
 import Constants from 'expo-constants';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '@/context/AuthContext';
@@ -47,7 +49,7 @@ const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const CAROUSEL_CARD_WIDTH = Math.min(SCREEN_WIDTH - 36, 420);
 const CAROUSEL_GAP = 12;
 
-function AnimatedCard({
+const AnimatedCard = React.memo(function AnimatedCard({
   children,
   onPress,
   style,
@@ -58,27 +60,30 @@ function AnimatedCard({
   style?: any;
   index?: number;
 }) {
+  // Only animate the first 6 cards to maintain maximum frame rates
+  const shouldAnimate = index < 6;
   const [scaleAnim] = useState(() => new Animated.Value(1));
-  const [fadeAnim] = useState(() => new Animated.Value(0));
-  const [translateYAnim] = useState(() => new Animated.Value(18));
+  const [fadeAnim] = useState(() => new Animated.Value(shouldAnimate ? 0 : 1));
+  const [translateYAnim] = useState(() => new Animated.Value(shouldAnimate ? 14 : 0));
 
   useEffect(() => {
+    if (!shouldAnimate) return;
     Animated.parallel([
       Animated.timing(fadeAnim, {
         toValue: 1,
-        duration: 260,
-        delay: Math.min(index * 40, 260),
+        duration: 200,
+        delay: Math.min(index * 30, 160),
         useNativeDriver: true,
       }),
       Animated.spring(translateYAnim, {
         toValue: 0,
-        friction: 8,
-        tension: 45,
-        delay: Math.min(index * 40, 260),
+        friction: 9,
+        tension: 50,
+        delay: Math.min(index * 30, 160),
         useNativeDriver: true,
       }),
     ]).start();
-  }, [fadeAnim, translateYAnim, index]);
+  }, [fadeAnim, translateYAnim, index, shouldAnimate]);
 
   const handlePressIn = () => {
     Animated.spring(scaleAnim, {
@@ -113,7 +118,7 @@ function AnimatedCard({
       </Pressable>
     </Animated.View>
   );
-}
+});
 
 export function ProfilePage({
   onGoBack,
@@ -122,9 +127,10 @@ export function ProfilePage({
   onGoBack?: () => void;
   canGoBack?: boolean;
 } = {}) {
-  const { user, streak, logout } = useAuth();
+  const { user, streak, logout, refreshProfile } = useAuth();
   const insets = useSafeAreaInsets();
   const { colors, isDark, themeMode } = useAppTheme();
+  const displayMetrics = useDisplayPerformance();
   const { showAlert } = useAlert();
 
   const Alert = {
@@ -132,6 +138,13 @@ export function ProfilePage({
       showAlert(title, message, buttons);
     },
   };
+
+  // Always fetch latest authoritative profile directly from database on Profile load
+  useEffect(() => {
+    if (user?.id) {
+      refreshProfile(user.id).catch(() => {});
+    }
+  }, [user?.id, refreshProfile]);
 
   // Active Sub-page State (Renders dedicated separate pages)
   const [activeSubPage, setActiveSubPage] = useState<ProfileSubPage>(null);
@@ -228,7 +241,12 @@ export function ProfilePage({
   }
 
   if (activeSubPage === 'settings') {
-    return <SettingsPage onBack={() => setActiveSubPage(null)} />;
+    return (
+      <SettingsPage
+        onBack={() => setActiveSubPage(null)}
+        onNavigateToEditProfile={() => setActiveSubPage('edit_profile')}
+      />
+    );
   }
 
   if (activeSubPage === 'app_info') {
@@ -299,6 +317,9 @@ export function ProfilePage({
           styles.scrollContent,
           { paddingBottom: Math.max(insets.bottom, 24) + 84 },
         ]}
+        scrollEventThrottle={displayMetrics.scrollEventThrottle}
+        removeClippedSubviews={Platform.OS === 'android'}
+        overScrollMode="never"
         showsVerticalScrollIndicator={false}>
         {/* 1. Next-Gen Scholar Identity Card */}
         <AnimatedCard
@@ -395,8 +416,10 @@ export function ProfilePage({
           snapToInterval={CAROUSEL_CARD_WIDTH + CAROUSEL_GAP}
           snapToAlignment="start"
           decelerationRate="fast"
-          onScroll={handleCarouselScroll}
-          scrollEventThrottle={16}
+          onMomentumScrollEnd={handleCarouselScroll}
+          onScrollEndDrag={handleCarouselScroll}
+          scrollEventThrottle={displayMetrics.scrollEventThrottle}
+          removeClippedSubviews={Platform.OS === 'android'}
           contentContainerStyle={styles.carouselContainer}
           style={{ marginBottom: 18 }}>
           {/* Slide 1: Study XP Mastery */}

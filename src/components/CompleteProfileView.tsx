@@ -35,7 +35,7 @@ const SEMESTER_OPTIONS = [
 ];
 
 export function CompleteProfileView({ onComplete }: { onComplete: () => void }) {
-  const { user, updateProfile } = useAuth();
+  const { user, updateProfile, refreshProfile } = useAuth();
   const { colors } = useAppTheme();
   const insets = useSafeAreaInsets();
 
@@ -49,6 +49,22 @@ export function CompleteProfileView({ onComplete }: { onComplete: () => void }) 
   const [loading, setLoading] = useState(false);
   const [showSemesterPicker, setShowSemesterPicker] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
+
+  // Fetch fresh profile state directly from DB on mount
+  useEffect(() => {
+    if (user?.id) {
+      refreshProfile(user.id).then((fresh) => {
+        if (fresh) {
+          if (fresh.name) setName(fresh.name);
+          if (fresh.username) setUsername(fresh.username);
+          if (fresh.university) setUniversity(fresh.university);
+          if (fresh.collegeDepartment) setCollegeDepartment(fresh.collegeDepartment);
+          if (fresh.semester) setSemester(fresh.semester);
+          if (fresh.avatar) setAvatar(fresh.avatar);
+        }
+      });
+    }
+  }, [user?.id, refreshProfile]);
 
   // Designed Alert Modal State
   const [alertConfig, setAlertConfig] = useState<StyledAlertConfig>({

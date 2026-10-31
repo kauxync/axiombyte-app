@@ -26,6 +26,7 @@ import {
   registerWithApi,
   loginWithApi,
   updateProfileWithApi,
+  fetchUserProfileApi,
   deleteAccountWithApi,
   syncOnlineStreakWithApi,
   purchaseStreakFreezeApi,
@@ -77,6 +78,7 @@ interface AuthContextType {
   }) => Promise<{ success: boolean; error?: string; coinsBonus?: number }>;
   logout: () => Promise<void>;
   deleteAccount: () => Promise<{ success: boolean; error?: string }>;
+  refreshProfile: (targetId?: string) => Promise<UserProfile | null>;
   simulateFriendReferral: () => Promise<number>; // Adds 200 coins for testing referral engine
 }
 
@@ -167,6 +169,48 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setStreak(local);
   }, []);
 
+  /**
+   * Always fetch the latest profile directly from Hostinger MySQL DB (never from cache)
+   */
+  const refreshProfile = useCallback(async (targetId?: string): Promise<UserProfile | null> => {
+    const activeId = targetId || userRef.current?.id;
+    if (!activeId) return null;
+
+    try {
+      const res = await fetchUserProfileApi(activeId);
+      if (res.success && res.data) {
+        const d = res.data;
+        const liveUser: UserProfile = {
+          id: d.id,
+          name: d.name || '',
+          username: d.username,
+          email: d.email,
+          university: d.university || '',
+          universityId: d.universityId !== undefined ? d.universityId : undefined,
+          collegeDepartment: d.collegeDepartment || '',
+          collegeDepartmentId: d.collegeDepartmentId !== undefined ? d.collegeDepartmentId : undefined,
+          semester: d.semester || '',
+          avatar: d.avatar || '',
+          referralCode: d.referralCode,
+          referredBy: d.referredBy || null,
+          coins: typeof d.coins === 'number' ? d.coins : (userRef.current?.coins ?? 200),
+          xp: typeof d.xp === 'number' ? d.xp : (userRef.current?.xp ?? 0),
+          authProvider: d.authProvider || userRef.current?.authProvider || 'email',
+          isEmailVerified: d.isEmailVerified !== undefined ? Boolean(d.isEmailVerified) : true,
+          isProfileCompleted: Boolean(d.isProfileCompleted),
+          createdAt: d.createdAt || userRef.current?.createdAt || new Date().toISOString(),
+        };
+
+        setUser(liveUser);
+        await saveStoredProfile(liveUser);
+        return liveUser;
+      }
+    } catch (e) {
+      if (__DEV__) console.warn('[AuthContext] Failed to refresh profile from DB:', e);
+    }
+    return userRef.current;
+  }, []);
+
   // Load session & streak from storage on app mount (runs ONCE on launch)
   useEffect(() => {
     async function initSession() {
@@ -183,8 +227,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setTransactions(txList);
         setStreak(streakData);
 
-        // WhatsApp-style automatic online check-in on app open
+        // Fetch authoritative profile directly from DB on app open (never relies on stale cache)
         if (storedUser?.id) {
+          refreshProfile(storedUser.id).catch(() => {});
           checkInOnlineStreak(storedUser).catch(() => {});
           registerDeviceTelemetry(storedUser.id).catch(() => {});
         }
@@ -196,20 +241,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
 
     initSession();
-  }, [checkInOnlineStreak]);
+  }, [checkInOnlineStreak, refreshProfile]);
 
-  // Sync streak whenever app comes to active foreground
+  // Sync streak & profile whenever app comes to active foreground
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (nextState: AppStateStatus) => {
       if (nextState === 'active') {
         const currentActive = userRef.current;
         if (currentActive?.id) {
+          refreshProfile(currentActive.id).catch(() => {});
           checkInOnlineStreak(currentActive).catch(() => {});
         }
       }
     });
     return () => subscription.remove();
-  }, [checkInOnlineStreak]);
+  }, [checkInOnlineStreak, refreshProfile]);
 
   const completeOnboarding = async () => {
     setIsOnboarded(true);
@@ -271,35 +317,58 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       username: usernamePrefix + Math.floor(100 + Math.random() * 900),
     });
 
-    if (!apiRes.success && apiRes.message?.toLowerCase().includes('already exists')) {
-      // Account already exists in DB (e.g. unverified user signing in). Now that code is verified, sign in.
-      const loginRes = await loginWithApi({ email: cleanEmail, password: pass });
-      if (loginRes.success && loginRes.data) {
-        const serverUser = loginRes.data;
-        const userProfile: UserProfile = {
-          id: serverUser.id,
-          name: serverUser.name || '',
-          username: serverUser.username,
-          email: serverUser.email,
-          university: serverUser.university || '',
-          collegeDepartment: serverUser.collegeDepartment || '',
-          semester: serverUser.semester || '',
-          avatar: serverUser.avatar || '',
-          referralCode: serverUser.referralCode,
-          referredBy: serverUser.referredBy || null,
-          coins: serverUser.coins || 200,
-          authProvider: 'email',
-          isEmailVerified: true,
-          isProfileCompleted: !!serverUser.isProfileCompleted,
-          createdAt: new Date().toISOString(),
-        };
-        setUser(userProfile);
-        await saveStoredProfile(userProfile);
-        return { success: true };
+    if (!apiRes.success) {
+      if (apiRes.message?.toLowerCase().includes('already exists')) {
+        // Account already exists in DB (e.g. unverified user signing in). Now that code is verified, sign in.
+        const loginRes = await loginWithApi({ email: cleanEmail, password: pass });
+        if (loginRes.success && loginRes.data) {
+          const serverUser = loginRes.data;
+          const userProfile: UserProfile = {
+            id: serverUser.id,
+            name: serverUser.name || '',
+            username: serverUser.username,
+            email: serverUser.email,
+            university: serverUser.university || '',
+            collegeDepartment: serverUser.collegeDepartment || '',
+            semester: serverUser.semester || '',
+            avatar: serverUser.avatar || '',
+            referralCode: serverUser.referralCode,
+            referredBy: serverUser.referredBy || null,
+            coins: serverUser.coins || 200,
+            authProvider: 'email',
+            isEmailVerified: true,
+            isProfileCompleted: !!serverUser.isProfileCompleted,
+            createdAt: new Date().toISOString(),
+          };
+          setUser(userProfile);
+          await saveStoredProfile(userProfile);
+          if (loginRes.data?.token) {
+            await saveAuthToken(loginRes.data.token);
+          }
+          registerDeviceTelemetry(userProfile.id, 'login').catch(() => {});
+          checkInOnlineStreak(userProfile).catch(() => {});
+          return { success: true };
+        }
+        return { success: false, error: loginRes.message || 'Account already exists. Please log in.' };
       }
+
+      // Fail closed on registration error (SEC-07: prevents phantom account creation)
+      return {
+        success: false,
+        error: apiRes.message || 'Failed to create account on server. Please try again.',
+      };
     }
 
-    const userId = apiRes.data?.id || 'usr_' + Date.now();
+    const userId = apiRes.data?.id;
+    if (!userId) {
+      return { success: false, error: 'Server did not return a valid user identity.' };
+    }
+
+    // Persist server-issued auth token securely (SEC-10)
+    if (apiRes.data?.token) {
+      await saveAuthToken(apiRes.data.token);
+    }
+
     const finalUsername = apiRes.data?.username || usernamePrefix;
     const referralCode = apiRes.data?.referralCode || generateReferralCode(finalUsername);
 
@@ -420,6 +489,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
    * Directly sets and persists authenticated user session (used by deep links and OAuth callbacks)
    */
   const setAuthenticatedUser = async (profile: UserProfile) => {
+    if (profile.token) {
+      await saveAuthToken(profile.token);
+    }
     setUser(profile);
     await saveStoredProfile(profile);
     registerDeviceTelemetry(profile.id, 'login').catch(() => {});
@@ -429,8 +501,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const loginWithGoogle = async () => {
     try {
       const res = await signInWithGoogle();
-      if (res.success && res.user) {
-        await setAuthenticatedUser(res.user);
+      if (res.success) {
+        if (res.user) {
+          await setAuthenticatedUser(res.user);
+        }
         return { success: true };
       }
       return { success: false, error: res.error || 'Google login failed.' };
@@ -442,8 +516,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const loginWithGithub = async () => {
     try {
       const res = await signInWithGithub();
-      if (res.success && res.user) {
-        await setAuthenticatedUser(res.user);
+      if (res.success) {
+        if (res.user) {
+          await setAuthenticatedUser(res.user);
+        }
         return { success: true };
       }
       return { success: false, error: res.error || 'GitHub login failed.' };
@@ -469,11 +545,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     let newTransactions = [...transactions];
     let bonusAwarded = 0;
 
-    // Check referral code if provided
+    // Check referral code if provided (SEC-09: single-claim enforcement & initial setup guard)
     if (data.appliedReferralCode && data.appliedReferralCode.trim().length > 3) {
       const code = data.appliedReferralCode.trim().toUpperCase();
       if (code === user.referralCode) {
         return { success: false, error: 'You cannot use your own referral code!' };
+      }
+      if (user.referredBy) {
+        return { success: false, error: 'A referral code has already been claimed on this account.' };
+      }
+      if (user.isProfileCompleted) {
+        return { success: false, error: 'Referral codes can only be applied during initial account setup.' };
       }
 
       // Valid referral code applied: New student gets 100 Coins (₹1.00)
@@ -495,7 +577,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
 
     // Sync with Hostinger MySQL backend
-    await updateProfileWithApi({
+    const apiRes = await updateProfileWithApi({
       userId: user.id,
       name: data.name.trim(),
       username: data.username.trim(),
@@ -503,25 +585,43 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       collegeDepartment: data.collegeDepartment.trim(),
       semester: data.semester,
       avatar: data.avatar,
+      appliedReferralCode: data.appliedReferralCode?.trim() || undefined,
     });
+
+    if (!apiRes.success && !apiRes.isMockFallback) {
+      return {
+        success: false,
+        error: apiRes.message || 'Failed to update profile on remote server.',
+      };
+    }
+
+    if (apiRes.data?.token) {
+      await saveAuthToken(apiRes.data.token);
+    }
 
     const updatedProfile: UserProfile = {
       ...user,
       name: data.name.trim(),
       username: data.username.trim(),
-      university: data.university.trim(),
-      collegeDepartment: data.collegeDepartment.trim(),
+      university: apiRes.data?.university || data.university.trim(),
+      universityId: apiRes.data?.universityId !== undefined ? apiRes.data.universityId : user.universityId,
+      collegeDepartment: apiRes.data?.collegeDepartment || data.collegeDepartment.trim(),
+      collegeDepartmentId: apiRes.data?.collegeDepartmentId !== undefined ? apiRes.data.collegeDepartmentId : user.collegeDepartmentId,
       semester: data.semester,
       avatar: data.avatar,
-      referralCode: user.referralCode || generateReferralCode(data.username),
-      referredBy: data.appliedReferralCode?.trim() || null,
-      coins: initialCoins,
+      referralCode: apiRes.data?.referralCode || user.referralCode || generateReferralCode(data.username),
+      referredBy: apiRes.data?.referredBy || user.referredBy || (data.appliedReferralCode?.trim() ? data.appliedReferralCode.trim().toUpperCase() : null),
+      coins: apiRes.data?.coins !== undefined ? apiRes.data.coins : initialCoins,
       isProfileCompleted: true,
+      token: apiRes.data?.token || user.token,
     };
 
     setUser(updatedProfile);
     setTransactions(newTransactions);
     await saveStoredProfile(updatedProfile);
+
+    // Also trigger online streak check-in to confirm daily record with updated profile
+    checkInOnlineStreak(updatedProfile).catch(() => {});
 
     return { success: true, coinsBonus: bonusAwarded };
   };
@@ -803,7 +903,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const deleteAccount = async () => {
     try {
       if (user?.id) {
-        await deleteAccountWithApi(user.id);
+        const res = await deleteAccountWithApi(user.id);
+        // Fail closed if remote deletion cannot be confirmed (SEC-08: GDPR/DPDP Right to Erasure integrity)
+        if (!res.success) {
+          return {
+            success: false,
+            error: res.message || 'Remote server could not confirm account deletion. Please check your connection and try again.',
+          };
+        }
       }
       await clearAllSessionData();
       await deleteAuthToken();
@@ -853,6 +960,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         loginWithGithub,
         setAuthenticatedUser,
         updateProfile,
+        refreshProfile,
         logout,
         deleteAccount,
         simulateFriendReferral,

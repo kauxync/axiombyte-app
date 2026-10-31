@@ -15,11 +15,13 @@ import { useAuth } from '@/context/AuthContext';
 import { useAlert } from '@/context/AlertContext';
 import { StyledAlertButton } from '../StyledAlertModal';
 import { AvatarPicker } from '../AvatarPicker';
+import { AcademicAutocompleteInput } from '../AcademicAutocompleteInput';
 import { Fonts } from '@/constants/theme';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAppTheme } from '@/context/ThemeContext';
+import { useDisplayPerformance } from '@/hooks/useDisplayPerformance';
 
-function AnimatedCard({
+const AnimatedCard = React.memo(function AnimatedCard({
   children,
   style,
   index = 0,
@@ -28,27 +30,29 @@ function AnimatedCard({
   style?: any;
   index?: number;
 }) {
+  const shouldAnimate = index < 6;
   const [scaleAnim] = useState(() => new Animated.Value(1));
-  const [fadeAnim] = useState(() => new Animated.Value(0));
-  const [translateYAnim] = useState(() => new Animated.Value(18));
+  const [fadeAnim] = useState(() => new Animated.Value(shouldAnimate ? 0 : 1));
+  const [translateYAnim] = useState(() => new Animated.Value(shouldAnimate ? 14 : 0));
 
   useEffect(() => {
+    if (!shouldAnimate) return;
     Animated.parallel([
       Animated.timing(fadeAnim, {
         toValue: 1,
-        duration: 260,
-        delay: Math.min(index * 45, 260),
+        duration: 200,
+        delay: Math.min(index * 30, 160),
         useNativeDriver: true,
       }),
       Animated.spring(translateYAnim, {
         toValue: 0,
-        friction: 8,
-        tension: 45,
-        delay: Math.min(index * 45, 260),
+        friction: 9,
+        tension: 50,
+        delay: Math.min(index * 30, 160),
         useNativeDriver: true,
       }),
     ]).start();
-  }, [fadeAnim, translateYAnim, index]);
+  }, [fadeAnim, translateYAnim, index, shouldAnimate]);
 
   return (
     <Animated.View
@@ -61,12 +65,13 @@ function AnimatedCard({
       <View style={style}>{children}</View>
     </Animated.View>
   );
-}
+});
 
 export function EditProfilePage({ onBack }: { onBack: () => void }) {
-  const { user, updateProfile } = useAuth();
+  const { user, updateProfile, refreshProfile } = useAuth();
   const insets = useSafeAreaInsets();
   const { colors } = useAppTheme();
+  const displayMetrics = useDisplayPerformance();
   const { showAlert } = useAlert();
 
   const Alert = {
@@ -82,6 +87,22 @@ export function EditProfilePage({ onBack }: { onBack: () => void }) {
   const [editDepartment, setEditDepartment] = useState(user?.collegeDepartment || '');
   const [editSemester, setEditSemester] = useState(user?.semester || '1');
   const [savingProfile, setSavingProfile] = useState(false);
+
+  // Always fetch live profile from MySQL database on mount
+  useEffect(() => {
+    if (user?.id) {
+      refreshProfile(user.id).then((freshUser) => {
+        if (freshUser) {
+          if (freshUser.name !== undefined && freshUser.name !== null) setEditName(String(freshUser.name));
+          if (freshUser.username !== undefined && freshUser.username !== null) setEditUsername(String(freshUser.username));
+          if (freshUser.avatar !== undefined && freshUser.avatar !== null) setEditAvatar(String(freshUser.avatar));
+          if (freshUser.university !== undefined) setEditUniversity(freshUser.university ? String(freshUser.university) : '');
+          if (freshUser.collegeDepartment !== undefined) setEditDepartment(freshUser.collegeDepartment ? String(freshUser.collegeDepartment) : '');
+          if (freshUser.semester !== undefined && freshUser.semester !== null) setEditSemester(String(freshUser.semester));
+        }
+      });
+    }
+  }, [user?.id, refreshProfile]);
 
   useEffect(() => {
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
@@ -157,7 +178,7 @@ export function EditProfilePage({ onBack }: { onBack: () => void }) {
             <View>
               <Text style={[styles.headerTitle, { color: colors.text }]}>Edit Profile</Text>
               <Text style={[styles.headerSubtitle, { color: colors.textSecondary }]}>
-                Scholar avatar, personal info & academic campus
+                Personal info & academic campus
               </Text>
             </View>
           </View>
@@ -169,6 +190,10 @@ export function EditProfilePage({ onBack }: { onBack: () => void }) {
           styles.scrollContent,
           { paddingBottom: Math.max(insets.bottom, 24) + 80 },
         ]}
+        keyboardShouldPersistTaps="handled"
+        scrollEventThrottle={displayMetrics.scrollEventThrottle}
+        removeClippedSubviews={false}
+        overScrollMode="never"
         showsVerticalScrollIndicator={false}>
         {/* 1. Avatar Picker Section */}
         <AnimatedCard
@@ -264,28 +289,26 @@ export function EditProfilePage({ onBack }: { onBack: () => void }) {
             </View>
           </View>
 
-          <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>UNIVERSITY / INSTITUTE</Text>
-          <TextInput
-            style={[
-              styles.textInput,
-              { backgroundColor: colors.cardSecondary, borderColor: colors.border, color: colors.text },
-            ]}
+          {/* University - Live Database Autocomplete Search & Multi-Tier Cache */}
+          <AcademicAutocompleteInput
+            label="UNIVERSITY / INSTITUTE"
+            iconName="school-outline"
+            type="university"
             value={editUniversity}
             onChangeText={setEditUniversity}
-            placeholder="e.g. Delhi Technological University"
-            placeholderTextColor={colors.textMuted}
+            placeholder="Search or enter university / institute"
+            colors={colors}
           />
 
-          <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>DEPARTMENT / COLLEGE</Text>
-          <TextInput
-            style={[
-              styles.textInput,
-              { backgroundColor: colors.cardSecondary, borderColor: colors.border, color: colors.text },
-            ]}
+          {/* College / Department - Live Database Autocomplete Search & Multi-Tier Cache */}
+          <AcademicAutocompleteInput
+            label="DEPARTMENT / COLLEGE"
+            iconName="business-outline"
+            type="department"
             value={editDepartment}
             onChangeText={setEditDepartment}
-            placeholder="e.g. Computer Science & Engineering"
-            placeholderTextColor={colors.textMuted}
+            placeholder="Search or enter college / department"
+            colors={colors}
           />
 
           <Text style={[styles.inputLabel, { color: colors.textSecondary }]}>CURRENT SEMESTER (1 - 8)</Text>

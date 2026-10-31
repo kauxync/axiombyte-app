@@ -8,7 +8,9 @@ import { CompleteProfileView } from './CompleteProfileView';
 import { MainAppLayout } from './MainAppLayout';
 import { AppIcon } from './AppIcon';
 import { MandatoryUpdateModal } from './MandatoryUpdateModal';
+import { NativeApkUpdateModal } from './NativeApkUpdateModal';
 import { checkAppUpdate, onUpdateAvailable } from '@/services/updates';
+import { checkForNativeApkUpdate, NativeReleaseInfo, onNativeUpdateAvailable } from '@/services/nativeUpdateService';
 
 import { Fonts } from '@/constants/theme';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -19,6 +21,7 @@ export function AppOrchestrator() {
   const { colors, isDark } = useAppTheme();
   const [showSplash, setShowSplash] = useState(true);
   const [mandatoryUpdateVisible, setMandatoryUpdateVisible] = useState(false);
+  const [nativeUpdateInfo, setNativeUpdateInfo] = useState<NativeReleaseInfo | null>(null);
   const insets = useSafeAreaInsets();
 
   // Keep branded splash visible for at least 1.5s for polished presentation
@@ -30,7 +33,7 @@ export function AppOrchestrator() {
     return () => clearTimeout(timer);
   }, []);
 
-  // Check for OTA updates on launch and whenever app returns to active foreground
+  // Check for OTA updates and Native APK updates on launch and whenever app returns to active foreground
   useEffect(() => {
     // 1. Subscribe to any detected update across the entire app
     const unsubscribe = onUpdateAvailable((isAvail) => {
@@ -39,10 +42,22 @@ export function AppOrchestrator() {
       }
     });
 
+    const unsubNative = onNativeUpdateAvailable((info) => {
+      if (info?.isUpdateAvailable) {
+        setNativeUpdateInfo(info);
+      }
+    });
+
     // 2. Initial check on startup
     checkAppUpdate().then((res) => {
       if (res.isAvailable) {
         setMandatoryUpdateVisible(true);
+      }
+    }).catch(() => {});
+
+    checkForNativeApkUpdate().then((info) => {
+      if (info?.isUpdateAvailable) {
+        setNativeUpdateInfo(info);
       }
     }).catch(() => {});
 
@@ -54,11 +69,18 @@ export function AppOrchestrator() {
             setMandatoryUpdateVisible(true);
           }
         }).catch(() => {});
+
+        checkForNativeApkUpdate().then((info) => {
+          if (info?.isUpdateAvailable) {
+            setNativeUpdateInfo(info);
+          }
+        }).catch(() => {});
       }
     });
 
     return () => {
       unsubscribe();
+      unsubNative();
       sub.remove();
     };
   }, []);
@@ -161,6 +183,11 @@ export function AppOrchestrator() {
     <>
       {renderContent()}
       <MandatoryUpdateModal visible={mandatoryUpdateVisible} />
+      <NativeApkUpdateModal
+        visible={!!nativeUpdateInfo}
+        updateInfo={nativeUpdateInfo}
+        onDismiss={() => setNativeUpdateInfo(null)}
+      />
     </>
   );
 }

@@ -41,9 +41,12 @@ export function AcademicAutocompleteInput({
   const [isSearchingRemote, setIsSearchingRemote] = useState(false);
   const cancelSearchRef = useRef<(() => void) | null>(null);
 
+  const safeValue = typeof value === 'string' ? value : '';
+  const cleanVal = safeValue.trim();
+
   // Initialize persistent cache once on mount
   useEffect(() => {
-    initAcademicCache();
+    initAcademicCache().catch(() => {});
   }, []);
 
   // Update suggestions whenever text value changes or dropdown opens
@@ -56,9 +59,20 @@ export function AcademicAutocompleteInput({
 
     const cancel = searchAcademicWithCache(
       type,
-      value,
+      safeValue,
       (results, isRemote) => {
-        setSuggestions(results);
+        const sanitized = Array.isArray(results)
+          ? results
+              .map((r) =>
+                typeof r === 'string'
+                  ? r
+                  : typeof r === 'object' && r !== null && 'name' in r
+                  ? String((r as any).name)
+                  : ''
+              )
+              .filter((x) => Boolean(x && x.trim()))
+          : [];
+        setSuggestions(sanitized);
         if (isRemote) {
           setIsSearchingRemote(false);
         }
@@ -75,10 +89,11 @@ export function AcademicAutocompleteInput({
         cancelSearchRef.current();
       }
     };
-  }, [value, isOpen, type]);
+  }, [safeValue, isOpen, type]);
 
   const handleSelect = (item: string) => {
-    onChangeText(item);
+    const cleanItem = typeof item === 'string' ? item : String(item || '');
+    onChangeText(cleanItem);
     setIsOpen(false);
   };
 
@@ -90,9 +105,8 @@ export function AcademicAutocompleteInput({
     await autoCreateAcademic(type, clean);
   };
 
-  const cleanVal = value.trim();
   const exactMatchExists = suggestions.some(
-    (s) => s.toLowerCase() === cleanVal.toLowerCase()
+    (s) => typeof s === 'string' && s.toLowerCase() === cleanVal.toLowerCase()
   );
   const showCreateOption = cleanVal.length > 1 && !exactMatchExists;
 
@@ -114,18 +128,20 @@ export function AcademicAutocompleteInput({
           style={[styles.input, { color: colors.text }]}
           placeholder={placeholder}
           placeholderTextColor={colors.textMuted}
-          value={value}
+          value={safeValue}
           onChangeText={(txt) => {
             onChangeText(txt);
             if (!isOpen) setIsOpen(true);
           }}
-          onFocus={() => setIsOpen(true)}
+          onFocus={() => {
+            if (!isOpen) setIsOpen(true);
+          }}
         />
 
         {/* Status indicator: search spinner or clear button or toggle */}
         {isSearchingRemote ? (
           <ActivityIndicator size="small" color={colors.primary} style={styles.iconBtn} />
-        ) : value.length > 0 ? (
+        ) : safeValue.length > 0 ? (
           <Pressable
             onPress={() => {
               onChangeText('');
@@ -200,11 +216,13 @@ export function AcademicAutocompleteInput({
               </Text>
             </View>
           ) : (
-            suggestions.slice(0, 8).map((item) => {
+            suggestions.slice(0, 8).map((rawItem, idx) => {
+              const item = typeof rawItem === 'string' ? rawItem : String(rawItem || '');
+              if (!item) return null;
               const isSelected = item.toLowerCase() === cleanVal.toLowerCase();
               return (
                 <Pressable
-                  key={item}
+                  key={`${item}-${idx}`}
                   onPress={() => handleSelect(item)}
                   style={[
                     styles.itemRow,

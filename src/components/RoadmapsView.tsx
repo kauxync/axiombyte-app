@@ -12,7 +12,9 @@ import {
   NativeSyntheticEvent,
   NativeScrollEvent,
   Animated,
+  Platform,
 } from 'react-native';
+import { useDisplayPerformance } from '@/hooks/useDisplayPerformance';
 import { Ionicons } from '@expo/vector-icons';
 import { Fonts } from '@/constants/theme';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -50,7 +52,7 @@ export function isIconUrl(icon?: string): boolean {
   );
 }
 
-function AnimatedCard({
+const AnimatedCard = React.memo(function AnimatedCard({
   children,
   onPress,
   style,
@@ -61,27 +63,30 @@ function AnimatedCard({
   style?: any;
   index?: number;
 }) {
+  // Only animate the first 6 cards to avoid thread contention and frame budget violations
+  const shouldAnimate = index < 6;
   const [scaleAnim] = useState(() => new Animated.Value(1));
-  const [fadeAnim] = useState(() => new Animated.Value(0));
-  const [translateYAnim] = useState(() => new Animated.Value(16));
+  const [fadeAnim] = useState(() => new Animated.Value(shouldAnimate ? 0 : 1));
+  const [translateYAnim] = useState(() => new Animated.Value(shouldAnimate ? 14 : 0));
 
   useEffect(() => {
+    if (!shouldAnimate) return;
     Animated.parallel([
       Animated.timing(fadeAnim, {
         toValue: 1,
-        duration: 260,
-        delay: Math.min(index * 35, 240),
+        duration: 200,
+        delay: Math.min(index * 30, 160),
         useNativeDriver: true,
       }),
       Animated.spring(translateYAnim, {
         toValue: 0,
-        friction: 8,
-        tension: 45,
-        delay: Math.min(index * 35, 240),
+        friction: 9,
+        tension: 50,
+        delay: Math.min(index * 30, 160),
         useNativeDriver: true,
       }),
     ]).start();
-  }, [fadeAnim, translateYAnim, index]);
+  }, [fadeAnim, translateYAnim, index, shouldAnimate]);
 
   const handlePressIn = () => {
     Animated.spring(scaleAnim, {
@@ -116,7 +121,7 @@ function AnimatedCard({
       </Pressable>
     </Animated.View>
   );
-}
+});
 
 export function RoadmapsView({
   onNavigateTab,
@@ -136,6 +141,7 @@ export function RoadmapsView({
 } = {}) {
   const insets = useSafeAreaInsets();
   const { colors, isDark } = useAppTheme();
+  const displayMetrics = useDisplayPerformance();
   const { languages, isLoading, isOffline, refreshCurriculum, refreshProgress } = useCurriculum();
   const { recordStreakActivity } = useAuth();
 
@@ -486,7 +492,9 @@ export function RoadmapsView({
             { paddingBottom: Math.max(insets.bottom, 24) + 90 },
           ]}
           onScroll={handleTopicScroll}
-          scrollEventThrottle={200}
+          scrollEventThrottle={displayMetrics.scrollEventThrottle}
+          removeClippedSubviews={Platform.OS === 'android'}
+          overScrollMode="never"
           showsVerticalScrollIndicator={false}>
           {/* Chapter Breadcrumb & Tag */}
           {currentChapter && (
@@ -618,6 +626,9 @@ export function RoadmapsView({
             styles.scrollContent,
             { paddingBottom: Math.max(insets.bottom, 24) + 80 },
           ]}
+          scrollEventThrottle={displayMetrics.scrollEventThrottle}
+          removeClippedSubviews={Platform.OS === 'android'}
+          overScrollMode="never"
           showsVerticalScrollIndicator={false}>
           {/* Track Hero Banner Card */}
           <View
@@ -859,6 +870,9 @@ export function RoadmapsView({
           styles.scrollContent,
           { paddingBottom: Math.max(insets.bottom, 24) + 84 },
         ]}
+        scrollEventThrottle={displayMetrics.scrollEventThrottle}
+        removeClippedSubviews={Platform.OS === 'android'}
+        overScrollMode="never"
         showsVerticalScrollIndicator={false}>
         {/* Scholar Developer Mastery Deck Card */}
         <View
@@ -1189,37 +1203,36 @@ export function RoadmapsView({
                 <View style={[styles.cardAccentLine, { backgroundColor: rm.color }]} />
 
                 <View style={styles.cardInnerPadding}>
-                  {/* Language Card Top Row */}
+                  {/* Language Card Top Row: Icon + Name & Badge (Left) and Status Pill (Right) */}
                   <View style={styles.cardTopRow}>
-                    <View
-                      style={[
-                        styles.langIconBox,
-                        {
-                          backgroundColor: `${rm.color}1E`,
-                          borderColor: `${rm.color}35`,
-                        },
-                      ]}>
-                      {isIconUrl(rm.icon) ? (
-                        <Image
-                          source={{ uri: rm.icon }}
-                          style={{ width: 26, height: 26 }}
-                          resizeMode="contain"
-                        />
-                      ) : (
-                        <Ionicons name={rm.icon as any} size={22} color={rm.color} />
-                      )}
-                    </View>
+                    <View style={styles.cardHeaderLeft}>
+                      <View
+                        style={[
+                          styles.langIconBox,
+                          {
+                            backgroundColor: `${rm.color}1E`,
+                            borderColor: `${rm.color}35`,
+                          },
+                        ]}>
+                        {isIconUrl(rm.icon) ? (
+                          <Image
+                            source={{ uri: rm.icon }}
+                            style={{ width: 24, height: 24 }}
+                            resizeMode="contain"
+                          />
+                        ) : (
+                          <Ionicons name={rm.icon as any} size={22} color={rm.color} />
+                        )}
+                      </View>
 
-                    <View style={{ flex: 1 }}>
-                      <View style={styles.nameBadgeRow}>
-                        <Text style={[styles.languageName, { color: colors.text }]}>{rm.name}</Text>
+                      <View style={styles.nameAndBadgeCol}>
+                        <Text style={[styles.languageName, { color: colors.text }]} numberOfLines={1}>
+                          {rm.name}
+                        </Text>
                         <View style={[styles.badgePill, { backgroundColor: `${rm.color}16`, borderColor: `${rm.color}30`, borderWidth: 0.5 }]}>
                           <Text style={[styles.badgePillText, { color: rm.color }]}>{rm.badge}</Text>
                         </View>
                       </View>
-                      <Text style={[styles.languageDesc, { color: colors.textSecondary }]} numberOfLines={2}>
-                        {rm.description}
-                      </Text>
                     </View>
 
                     <View
@@ -1256,7 +1269,12 @@ export function RoadmapsView({
                     </View>
                   </View>
 
-                  {/* Progress Bar */}
+                  {/* Full-width Language Description with proper margins & line height */}
+                  <Text style={[styles.languageDesc, { color: colors.textSecondary }]} numberOfLines={3}>
+                    {rm.description}
+                  </Text>
+
+                  {/* Progress Bar Track */}
                   <View style={[styles.cardProgressBarBg, { backgroundColor: colors.cardSecondary }]}>
                     <View
                       style={[
@@ -1713,8 +1731,22 @@ const styles = StyleSheet.create({
   },
   cardTopRow: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  cardHeaderLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
     gap: 12,
+    flex: 1,
+  },
+  nameAndBadgeCol: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+    flexWrap: 'wrap',
   },
   langIconBox: {
     width: 44,
@@ -1750,18 +1782,20 @@ const styles = StyleSheet.create({
   },
   languageDesc: {
     fontFamily: Fonts.body,
-    fontSize: 12.5,
-    lineHeight: 18,
+    fontSize: 13,
+    lineHeight: 19.5,
+    marginTop: 10,
+    marginBottom: 14,
   },
   cardProgressBarBg: {
-    height: 5,
-    borderRadius: 2.5,
+    height: 6,
+    borderRadius: 3,
     overflow: 'hidden',
-    marginBottom: 10,
+    marginBottom: 12,
   },
   cardProgressBarFill: {
     height: '100%',
-    borderRadius: 2.5,
+    borderRadius: 3,
   },
   cardFooter: {
     flexDirection: 'row',
@@ -1845,13 +1879,13 @@ const styles = StyleSheet.create({
     borderRadius: 22,
     borderWidth: 1,
     overflow: 'hidden',
-    marginBottom: 6,
+    marginBottom: 16,
   },
   trackBannerBody: {
     padding: 18,
   },
   bannerTagRow: {
-    marginBottom: 8,
+    marginBottom: 10,
   },
   bannerTagLeft: {
     flexDirection: 'row',
@@ -1890,32 +1924,32 @@ const styles = StyleSheet.create({
   },
   trackName: {
     fontFamily: Fonts.heading,
-    fontSize: 16.5,
+    fontSize: 17,
     fontWeight: '800',
     letterSpacing: -0.3,
   },
   trackDesc: {
     fontFamily: Fonts.body,
-    fontSize: 13,
-    lineHeight: 18,
+    fontSize: 13.5,
+    lineHeight: 20,
     marginTop: 10,
-    marginBottom: 12,
+    marginBottom: 14,
   },
   progressBarBg: {
-    height: 5,
-    borderRadius: 2.5,
+    height: 6,
+    borderRadius: 3,
     overflow: 'hidden',
-    marginBottom: 10,
+    marginBottom: 8,
   },
   progressBarFill: {
     height: '100%',
-    borderRadius: 2.5,
+    borderRadius: 3,
   },
   trackStatsRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginTop: 6,
+    marginTop: 2,
   },
   trackStatsText: {
     fontFamily: Fonts.body,

@@ -29,6 +29,7 @@ import { AppTab } from './BottomNavBar';
 import { useCurriculum } from '@/context/CurriculumContext';
 import { getAllTopics } from '@/data/roadmaps';
 import { getAllSubjectTopics } from '@/data/subjects';
+import { useDisplayPerformance } from '@/hooks/useDisplayPerformance';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 const CAROUSEL_CARD_WIDTH = Math.min(SCREEN_WIDTH * 0.82, 330);
@@ -57,6 +58,7 @@ export function HomeDashboardView({
   const { user, streak } = useAuth();
   const insets = useSafeAreaInsets();
   const { colors, isDark } = useAppTheme();
+  const displayMetrics = useDisplayPerformance();
   const {
     languages,
     subjects,
@@ -727,6 +729,9 @@ export function HomeDashboardView({
           { paddingBottom: Math.max(insets.bottom, 24) + 84 },
         ]}
         showsVerticalScrollIndicator={false}
+        scrollEventThrottle={displayMetrics.scrollEventThrottle}
+        removeClippedSubviews={Platform.OS === 'android'}
+        overScrollMode="never"
         refreshControl={
           <RefreshControl
             refreshing={isSyncing}
@@ -1088,14 +1093,22 @@ export function HomeDashboardView({
               decelerationRate="fast"
               snapToInterval={CAROUSEL_CARD_WIDTH + 14}
               snapToAlignment="start"
-              onScroll={(e) => {
+              onMomentumScrollEnd={(e) => {
                 const offsetX = e.nativeEvent.contentOffset.x;
                 const index = Math.round(offsetX / (CAROUSEL_CARD_WIDTH + 14));
                 if (index >= 0 && index < filteredActiveItems.length && index !== activeStudyIndex) {
                   setActiveStudyIndex(index);
                 }
               }}
-              scrollEventThrottle={16}>
+              onScrollEndDrag={(e) => {
+                const offsetX = e.nativeEvent.contentOffset.x;
+                const index = Math.round(offsetX / (CAROUSEL_CARD_WIDTH + 14));
+                if (index >= 0 && index < filteredActiveItems.length && index !== activeStudyIndex) {
+                  setActiveStudyIndex(index);
+                }
+              }}
+              removeClippedSubviews={Platform.OS === 'android'}
+              scrollEventThrottle={displayMetrics.scrollEventThrottle}>
               {filteredActiveItems.map((item, index) => {
                 const isCurrent = index === currentActiveStudyIndex;
 
@@ -1367,14 +1380,22 @@ export function HomeDashboardView({
               snapToAlignment="start"
               style={styles.langCarouselScroll}
               contentContainerStyle={styles.langCarouselContent}
-              onScroll={(e) => {
+              onMomentumScrollEnd={(e) => {
                 const offsetX = e.nativeEvent.contentOffset.x;
                 const index = Math.round(offsetX / (LANG_CARD_WIDTH + LANG_CARD_GAP));
                 if (index >= 0 && index < filteredLanguages.length && index !== activeLangIndex) {
                   setActiveLangIndex(index);
                 }
               }}
-              scrollEventThrottle={16}>
+              onScrollEndDrag={(e) => {
+                const offsetX = e.nativeEvent.contentOffset.x;
+                const index = Math.round(offsetX / (LANG_CARD_WIDTH + LANG_CARD_GAP));
+                if (index >= 0 && index < filteredLanguages.length && index !== activeLangIndex) {
+                  setActiveLangIndex(index);
+                }
+              }}
+              removeClippedSubviews={Platform.OS === 'android'}
+              scrollEventThrottle={displayMetrics.scrollEventThrottle}>
               {filteredLanguages.map((lang, index) => {
                 const isCurrentActive = index === currentActiveLangIndex;
                 const cardColor = lang.iconColor || colors.primary;
@@ -1730,14 +1751,22 @@ export function HomeDashboardView({
               snapToAlignment="start"
               style={styles.langCarouselScroll}
               contentContainerStyle={styles.langCarouselContent}
-              onScroll={(e) => {
+              onMomentumScrollEnd={(e) => {
                 const offsetX = e.nativeEvent.contentOffset.x;
                 const index = Math.round(offsetX / (LANG_CARD_WIDTH + LANG_CARD_GAP));
                 if (index >= 0 && index < filteredSubjects.length && index !== activeSubjIndex) {
                   setActiveSubjIndex(index);
                 }
               }}
-              scrollEventThrottle={16}>
+              onScrollEndDrag={(e) => {
+                const offsetX = e.nativeEvent.contentOffset.x;
+                const index = Math.round(offsetX / (LANG_CARD_WIDTH + LANG_CARD_GAP));
+                if (index >= 0 && index < filteredSubjects.length && index !== activeSubjIndex) {
+                  setActiveSubjIndex(index);
+                }
+              }}
+              removeClippedSubviews={Platform.OS === 'android'}
+              scrollEventThrottle={displayMetrics.scrollEventThrottle}>
               {filteredSubjects.map((subj, index) => {
                 const isCurrentActive = index === currentActiveSubjIndex;
                 const cardColor = subj.iconColor || colors.accent || colors.primary;

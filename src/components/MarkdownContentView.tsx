@@ -491,9 +491,9 @@ function parseMarkdownBlocks(content: string): Block[] {
 function isSafeUrl(url?: string): boolean {
   if (!url) return false;
   const trimmed = url.trim().toLowerCase();
+  // Enforce HTTPS exclusively for web links (blocks unencrypted HTTP, javascript:, file:, data:)
   return (
     trimmed.startsWith('https://') ||
-    trimmed.startsWith('http://') ||
     trimmed.startsWith('mailto:')
   );
 }

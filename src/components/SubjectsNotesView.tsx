@@ -12,7 +12,9 @@ import {
   NativeSyntheticEvent,
   NativeScrollEvent,
   Animated,
+  Platform,
 } from 'react-native';
+import { useDisplayPerformance } from '@/hooks/useDisplayPerformance';
 import { Ionicons } from '@expo/vector-icons';
 import { Fonts } from '@/constants/theme';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -47,7 +49,7 @@ export function isIconUrl(icon?: string): boolean {
   );
 }
 
-function AnimatedCard({
+const AnimatedCard = React.memo(function AnimatedCard({
   children,
   onPress,
   style,
@@ -58,27 +60,30 @@ function AnimatedCard({
   style?: any;
   index?: number;
 }) {
+  // Only animate first 6 cards to eliminate thread contention and frame drops
+  const shouldAnimate = index < 6;
   const [scaleAnim] = useState(() => new Animated.Value(1));
-  const [fadeAnim] = useState(() => new Animated.Value(0));
-  const [translateYAnim] = useState(() => new Animated.Value(16));
+  const [fadeAnim] = useState(() => new Animated.Value(shouldAnimate ? 0 : 1));
+  const [translateYAnim] = useState(() => new Animated.Value(shouldAnimate ? 14 : 0));
 
   useEffect(() => {
+    if (!shouldAnimate) return;
     Animated.parallel([
       Animated.timing(fadeAnim, {
         toValue: 1,
-        duration: 260,
-        delay: Math.min(index * 35, 240),
+        duration: 200,
+        delay: Math.min(index * 30, 160),
         useNativeDriver: true,
       }),
       Animated.spring(translateYAnim, {
         toValue: 0,
-        friction: 8,
-        tension: 45,
-        delay: Math.min(index * 35, 240),
+        friction: 9,
+        tension: 50,
+        delay: Math.min(index * 30, 160),
         useNativeDriver: true,
       }),
     ]).start();
-  }, [fadeAnim, translateYAnim, index]);
+  }, [fadeAnim, translateYAnim, index, shouldAnimate]);
 
   const handlePressIn = () => {
     Animated.spring(scaleAnim, {
@@ -113,7 +118,7 @@ function AnimatedCard({
       </Pressable>
     </Animated.View>
   );
-}
+});
 
 // ---------------------------------------------------------------------------
 // MAIN COMPONENT
@@ -131,6 +136,7 @@ export function SubjectsNotesView({
 } = {}) {
   const insets = useSafeAreaInsets();
   const { colors, isDark } = useAppTheme();
+  const displayMetrics = useDisplayPerformance();
   const { subjects, isOffline, refreshProgress } = useCurriculum();
   const { recordStreakActivity } = useAuth();
   const activeSubjects = useMemo(() => subjects || [], [subjects]);
@@ -495,7 +501,9 @@ export function SubjectsNotesView({
             { paddingBottom: Math.max(insets.bottom, 24) + 90 },
           ]}
           onScroll={handleTopicScroll}
-          scrollEventThrottle={200}
+          scrollEventThrottle={displayMetrics.scrollEventThrottle}
+          removeClippedSubviews={Platform.OS === 'android'}
+          overScrollMode="never"
           showsVerticalScrollIndicator={false}>
           {/* Chapter Breadcrumb & Tag */}
           {currentChapter && (
@@ -748,6 +756,9 @@ export function SubjectsNotesView({
             styles.scrollContent,
             { paddingBottom: Math.max(insets.bottom, 24) + 80 },
           ]}
+          scrollEventThrottle={displayMetrics.scrollEventThrottle}
+          removeClippedSubviews={Platform.OS === 'android'}
+          overScrollMode="never"
           showsVerticalScrollIndicator={false}>
           {/* Subject Hero Header Card */}
           <View
@@ -998,6 +1009,9 @@ export function SubjectsNotesView({
           styles.scrollContent,
           { paddingBottom: Math.max(insets.bottom, 24) + 84 },
         ]}
+        scrollEventThrottle={displayMetrics.scrollEventThrottle}
+        removeClippedSubviews={Platform.OS === 'android'}
+        overScrollMode="never"
         showsVerticalScrollIndicator={false}>
         {/* Scholar Mastery Deck Card */}
         <View

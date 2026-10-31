@@ -11,7 +11,9 @@ export interface UserProfile {
   username: string;
   email: string;
   university: string;
+  universityId?: number;
   collegeDepartment: string;
+  collegeDepartmentId?: number;
   semester: string;
   avatar: string;
   referralCode: string;
@@ -22,6 +24,7 @@ export interface UserProfile {
   isEmailVerified?: boolean;
   isProfileCompleted?: boolean;
   createdAt: string;
+  token?: string;
 }
 
 export interface CoinTransaction {
@@ -230,7 +233,8 @@ export async function getStreakData(): Promise<StreakData> {
         longestStreak: 1,
         lastActiveDate: today,
         todayCompleted: true,
-        freezeCount: 1,
+        freezeCount: 0,
+        freezeStatus: 'none',
         historyDates: [today],
         weeklyActivity: computeCurrentWeekActivity([today]),
       };
@@ -259,9 +263,21 @@ export async function getStreakData(): Promise<StreakData> {
       return data;
     }
 
-    // Missed 2+ days: Check if user has streak freeze
-    if (data.freezeCount > 0) {
-      data.freezeCount -= 1;
+    // Calculate calendar days difference
+    const diffSec = new Date(today).getTime() - new Date(data.lastActiveDate || yesterday).getTime();
+    const daysElapsed = Math.round(diffSec / (1000 * 60 * 60 * 24));
+
+    // Missed day: Check if user has an active purchased streak freeze
+    const hasPurchasedFreeze =
+      (data.freezeCount > 0 || data.freezeStatus === 'available') &&
+      Boolean(data.freezePurchasedDate);
+
+    // 1 purchased freeze protects 1 missed day (daysElapsed === 2)
+    if (hasPurchasedFreeze && daysElapsed === 2) {
+      // Consume freeze to protect streak and bridge to yesterday so streak continues
+      data.freezeCount = 0;
+      data.freezeStatus = 'used';
+      data.freezeUsedDate = yesterday;
       data.lastActiveDate = yesterday;
       data.todayCompleted = false;
       data.freezeUsedToday = true;
@@ -270,7 +286,8 @@ export async function getStreakData(): Promise<StreakData> {
       return data;
     }
 
-    // Streak broken: preserve lostStreak for recovery purchase
+    // Streak broken: No purchased freeze was available (or missed > 1 day)
+    // Streak breaks and starts from new!
     if (data.currentStreak > 0) {
       data.lostStreak = data.currentStreak;
       data.streakLostToday = true;
@@ -287,7 +304,8 @@ export async function getStreakData(): Promise<StreakData> {
       longestStreak: 1,
       lastActiveDate: today,
       todayCompleted: true,
-      freezeCount: 1,
+      freezeCount: 0,
+      freezeStatus: 'none',
       historyDates: [today],
       weeklyActivity: computeCurrentWeekActivity([today]),
     };
@@ -324,12 +342,14 @@ export async function recordDailyStreakActivity(): Promise<{
     };
   }
 
-  // Calculate new streak count
+  // Calculate new streak count:
+  // If consecutive with yesterday AND current streak is intact (> 0), increment!
+  // Otherwise (if streak was broken or missed without a freeze), start new streak from Day 1!
   let newStreak = current.currentStreak;
-  if (current.lastActiveDate === yesterday) {
+  if (current.lastActiveDate === yesterday && current.currentStreak > 0) {
     newStreak += 1;
-  } else if (current.lastActiveDate !== today) {
-    newStreak = 1; // Restart streak
+  } else if (current.lastActiveDate !== today || current.currentStreak === 0) {
+    newStreak = 1; // Start new streak from 1
   }
 
   const newLongest = Math.max(current.longestStreak, newStreak);

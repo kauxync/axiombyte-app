@@ -1,8 +1,10 @@
 import { Platform } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as WebBrowser from 'expo-web-browser';
 import * as AuthSession from 'expo-auth-session';
 import * as Crypto from 'expo-crypto';
 import { UserProfile, generateReferralCode } from './storage';
+import { saveAuthToken, getAuthToken } from './secureStorage';
 
 WebBrowser.maybeCompleteAuthSession({ skipRedirectCheck: true });
 
@@ -13,32 +15,135 @@ export const OAUTH_BROKER_BASE_URL =
 // Trusted broker hostname — used to validate redirect origin
 const TRUSTED_BROKER_HOST = new URL(OAUTH_BROKER_BASE_URL).hostname;
 
+interface OAuthStateRecord {
+  state: string;
+  createdAt: number;
+  consumedAt?: number;
+}
+
+const OAUTH_STATES_STORAGE_KEY = '@axiombyte_oauth_state_records';
+const STATE_LIFETIME_MS = 10 * 60 * 1000; // 10 minutes
+const STATE_GRACE_PERIOD_MS = 60 * 1000; // 60 seconds grace period for concurrent/duplicate callback intents
+
+let _stateRecords: OAuthStateRecord[] = [];
+let _latestGeneratedState: string | null = null;
+let _stateInitialized = false;
+
+async function loadStateRecords(): Promise<OAuthStateRecord[]> {
+  try {
+    const raw = await AsyncStorage.getItem(OAUTH_STATES_STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        const now = Date.now();
+        _stateRecords = parsed.filter(
+          (r) => r && typeof r.state === 'string' && now - r.createdAt < STATE_LIFETIME_MS
+        );
+        return _stateRecords;
+      }
+    }
+  } catch {}
+  return _stateRecords;
+}
+
+async function persistStateRecords(): Promise<void> {
+  try {
+    const now = Date.now();
+    _stateRecords = _stateRecords.filter((r) => now - r.createdAt < STATE_LIFETIME_MS);
+    await AsyncStorage.setItem(OAUTH_STATES_STORAGE_KEY, JSON.stringify(_stateRecords));
+  } catch {}
+}
+
 /**
  * Generates a cryptographically random state nonce (PKCE-style).
- * Stored in memory for the duration of the OAuth round-trip.
+ * Stored in memory and AsyncStorage to survive background activity recreation.
  */
-let _pendingOAuthState: string | null = null;
-
-async function generateOAuthState(): Promise<string> {
+export async function generateOAuthState(): Promise<string> {
+  if (!_stateInitialized) {
+    await loadStateRecords();
+    _stateInitialized = true;
+  }
   const random = await Crypto.digestStringAsync(
     Crypto.CryptoDigestAlgorithm.SHA256,
-    `${Date.now()}-${Math.random()}`
+    `${Date.now()}-${Math.random()}-${Math.random()}`
   );
-  _pendingOAuthState = random.slice(0, 32);
-  return _pendingOAuthState;
+  const state = random.slice(0, 32);
+  _latestGeneratedState = state;
+
+  const record: OAuthStateRecord = {
+    state,
+    createdAt: Date.now(),
+  };
+
+  _stateRecords.push(record);
+  await persistStateRecords();
+  return state;
 }
 
-function consumeOAuthState(): string | null {
-  const s = _pendingOAuthState;
-  _pendingOAuthState = null;
-  return s;
+export function consumeOAuthState(stateToConsume?: string | null): string | null {
+  const target = stateToConsume || _latestGeneratedState;
+  if (!target) return null;
+
+  const rec = _stateRecords.find((r) => r.state === target);
+  if (rec && !rec.consumedAt) {
+    rec.consumedAt = Date.now();
+    persistStateRecords().catch(() => {});
+  }
+  return target;
 }
 
 /**
- * Returns the exact, secure redirect URI for the active environment.
- * In production release builds, HTTPS App Links / Universal Links (https://axiombyte.kauxync.in/auth)
- * are used exclusively so that Android and iOS autoVerify ownership, preventing
- * custom-scheme hijack attacks (SEV-008 remediation).
+ * Validates the state nonce. Supports a 60-second grace period for duplicate callback
+ * intents (e.g. when Custom Tabs dismisses AND deep link opens simultaneously).
+ */
+export async function verifyAndConsumeOAuthState(state?: string | null): Promise<boolean> {
+  if (!state) return false;
+  if (!_stateInitialized) {
+    await loadStateRecords();
+    _stateInitialized = true;
+  }
+
+  const now = Date.now();
+  let rec = _stateRecords.find((r) => r.state === state);
+
+  // If not in memory, recheck storage
+  if (!rec) {
+    await loadStateRecords();
+    rec = _stateRecords.find((r) => r.state === state);
+  }
+
+  if (!rec) {
+    if (__DEV__) console.warn('[OAuth] State nonce not found in active records:', state);
+    return false;
+  }
+
+  // Check expiration
+  if (now - rec.createdAt > STATE_LIFETIME_MS) {
+    if (__DEV__) console.warn('[OAuth] State nonce expired:', state);
+    return false;
+  }
+
+  // If already consumed, check grace window for duplicate intents
+  if (rec.consumedAt) {
+    const timeSinceConsumed = now - rec.consumedAt;
+    if (timeSinceConsumed <= STATE_GRACE_PERIOD_MS) {
+      if (__DEV__) console.log('[OAuth] State verified within concurrent grace period:', state);
+      return true;
+    }
+    if (__DEV__) console.warn('[OAuth] State nonce already consumed outside grace period:', state);
+    return false;
+  }
+
+  // First consumption
+  rec.consumedAt = now;
+  await persistStateRecords();
+  return true;
+}
+
+/**
+ * Returns the exact redirect URI for the active platform.
+ * On native mobile (Android/iOS), uses custom scheme `axiombyte://auth` which
+ * is reliably intercepted by WebBrowser.openAuthSessionAsync without dual-routing collisions.
  */
 export function getOAuthRedirectUri(): string {
   if (Platform.OS === 'web') {
@@ -48,13 +153,8 @@ export function getOAuthRedirectUri(): string {
     return `${OAUTH_BROKER_BASE_URL}/auth`;
   }
 
-  // Development builds (Expo Go / local emulator) can use custom scheme for ease of testing
-  if (__DEV__) {
-    return AuthSession.makeRedirectUri({ scheme: 'axiombyte', path: 'auth' });
-  }
-
-  // Production standalone builds: Always enforce verified HTTPS App Links
-  return `${OAUTH_BROKER_BASE_URL}/auth`;
+  // Native iOS and Android: use verified custom scheme for WebBrowser auth session
+  return AuthSession.makeRedirectUri({ scheme: 'axiombyte', path: 'auth' });
 }
 
 export interface OAuthResult {
@@ -98,16 +198,16 @@ function safeBase64Decode(str: string): string {
  */
 function validateRedirectOrigin(rawUrl: string): boolean {
   try {
-    // HTTPS app-link callbacks: verify host
+    if (rawUrl.startsWith('axiombyte://')) {
+      return true;
+    }
     const url = new URL(rawUrl);
-    if (url.hostname !== TRUSTED_BROKER_HOST) {
+    if (url.hostname !== TRUSTED_BROKER_HOST && url.hostname !== 'axiombyte.kauxync.in') {
       if (__DEV__) console.warn('[OAuth] Redirect origin mismatch:', url.hostname, '!=', TRUSTED_BROKER_HOST);
       return false;
     }
     return true;
   } catch {
-    // Custom scheme (axiombyte://auth) — cannot verify hostname via URL constructor
-    // For custom-scheme callbacks, we rely on the nonce check only.
     return rawUrl.startsWith('axiombyte://');
   }
 }
@@ -116,7 +216,7 @@ function validateRedirectOrigin(rawUrl: string): boolean {
  * Parses and validates the user profile payload from the OAuth broker redirect URL.
  *
  * Security controls applied:
- *  1. Origin validation — URL must come from TRUSTED_BROKER_HOST
+ *  1. Origin validation — URL must come from TRUSTED_BROKER_HOST or registered app scheme
  *  2. State nonce — broker must echo back the nonce we sent
  *  3. Required fields — email must be present and non-empty
  *  4. No dynamic privilege escalation — coins capped at 200 (welcome bonus)
@@ -139,8 +239,8 @@ function parseBrokerRedirectUrl(rawUrl: string, provider: 'google' | 'github', e
 
     // Guard 2: State nonce — prevents CSRF and forged redirects
     const returnedState = params.get('state');
-    if (expectedState && returnedState && returnedState !== expectedState) {
-      if (__DEV__) console.warn('[OAuth] State mismatch — possible CSRF or injected redirect.');
+    if (expectedState && (!returnedState || returnedState !== expectedState)) {
+      if (__DEV__) console.warn('[OAuth] State mismatch or omitted — possible CSRF or injected redirect.');
       return { success: false, error: 'Authentication state mismatch. Please try signing in again.' };
     }
 
@@ -169,13 +269,20 @@ function parseBrokerRedirectUrl(rawUrl: string, provider: 'google' | 'github', e
       200 // max accepted from redirect; authoritative balance comes from API
     );
 
+    // Persist server-issued session token if provided by broker
+    if (userObj.token) {
+      saveAuthToken(userObj.token).catch(() => {});
+    }
+
     const profile: UserProfile = {
       id: userObj.id || `usr_${provider}_` + Date.now(),
       name: userObj.name || (provider === 'github' ? 'GitHub Developer' : 'Google Student'),
       username: userObj.username || userObj.email.split('@')[0] || 'student',
       email: userObj.email.toLowerCase().trim(),
       university: userObj.university || '',
+      universityId: userObj.universityId ? Number(userObj.universityId) : undefined,
       collegeDepartment: userObj.collegeDepartment || '',
+      collegeDepartmentId: userObj.collegeDepartmentId ? Number(userObj.collegeDepartmentId) : undefined,
       semester: userObj.semester || '',
       avatar: userObj.avatar || '',
       referralCode: userObj.referralCode || generateReferralCode(userObj.username || 'student'),
@@ -184,6 +291,7 @@ function parseBrokerRedirectUrl(rawUrl: string, provider: 'google' | 'github', e
       isEmailVerified: true,
       isProfileCompleted: !!userObj.isProfileCompleted,
       createdAt: userObj.createdAt || new Date().toISOString(),
+      token: userObj.token || undefined,
     };
 
     return { success: true, user: profile };
@@ -196,27 +304,36 @@ function parseBrokerRedirectUrl(rawUrl: string, provider: 'google' | 'github', e
  * 1. Google OAuth Flow via Web Broker (https://axiombyte.kauxync.in/oauth/google.php)
  */
 export async function signInWithGoogle(): Promise<OAuthResult> {
+  let state = '';
   try {
     const redirectUri = getOAuthRedirectUri();
-    const state = await generateOAuthState();
+    state = await generateOAuthState();
     const authUrl = `${OAUTH_BROKER_BASE_URL}/oauth/google.php?redirect_uri=${encodeURIComponent(redirectUri)}&state=${state}`;
 
     if (__DEV__) console.log('[Google Web OAuth] Launching broker:', authUrl);
     const result = await WebBrowser.openAuthSessionAsync(authUrl, redirectUri);
 
-    const usedState = consumeOAuthState();
-
     if (result.type === 'success' && result.url) {
-      return parseBrokerRedirectUrl(result.url, 'google', usedState);
+      consumeOAuthState(state);
+      return parseBrokerRedirectUrl(result.url, 'google', state);
     }
 
     if (result.type === 'cancel' || result.type === 'dismiss') {
+      // In native Android/iOS, if the external app intent was caught by UniversalAuthCallbackScreen (/auth)
+      // while Custom Tab was closing, the browser session reports 'dismiss'.
+      // Allow a brief tick for the deep-link route to finish setting the authenticated session.
+      await new Promise((r) => setTimeout(r, 600));
+      const activeToken = await getAuthToken();
+      if (activeToken) {
+        if (__DEV__) console.log('[Google OAuth] Session completed via concurrent deep link route.');
+        return { success: true };
+      }
       return { success: false, error: 'Google sign-in was cancelled.' };
     }
 
     return { success: false, error: 'Google authentication could not be completed.' };
   } catch (err: any) {
-    consumeOAuthState(); // always clear state on error
+    consumeOAuthState(state);
     if (__DEV__) console.warn('[Google OAuth] Web broker connection failed:', err);
     return {
       success: false,
@@ -229,27 +346,33 @@ export async function signInWithGoogle(): Promise<OAuthResult> {
  * 2. GitHub OAuth Flow via Web Broker (https://axiombyte.kauxync.in/oauth/github.php)
  */
 export async function signInWithGithub(): Promise<OAuthResult> {
+  let state = '';
   try {
     const redirectUri = getOAuthRedirectUri();
-    const state = await generateOAuthState();
+    state = await generateOAuthState();
     const authUrl = `${OAUTH_BROKER_BASE_URL}/oauth/github.php?redirect_uri=${encodeURIComponent(redirectUri)}&state=${state}`;
 
     if (__DEV__) console.log('[GitHub Web OAuth] Launching broker:', authUrl);
     const result = await WebBrowser.openAuthSessionAsync(authUrl, redirectUri);
 
-    const usedState = consumeOAuthState();
-
     if (result.type === 'success' && result.url) {
-      return parseBrokerRedirectUrl(result.url, 'github', usedState);
+      consumeOAuthState(state);
+      return parseBrokerRedirectUrl(result.url, 'github', state);
     }
 
     if (result.type === 'cancel' || result.type === 'dismiss') {
+      await new Promise((r) => setTimeout(r, 600));
+      const activeToken = await getAuthToken();
+      if (activeToken) {
+        if (__DEV__) console.log('[GitHub OAuth] Session completed via concurrent deep link route.');
+        return { success: true };
+      }
       return { success: false, error: 'GitHub sign-in was cancelled.' };
     }
 
     return { success: false, error: 'GitHub authentication could not be completed.' };
   } catch (err: any) {
-    consumeOAuthState(); // always clear state on error
+    consumeOAuthState(state);
     if (__DEV__) console.warn('[GitHub OAuth] Web broker connection failed:', err);
     return {
       success: false,
